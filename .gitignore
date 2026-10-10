@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Xcode — пользовательские настройки и состояние
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.perspectivev3
+*.mode1v3
+*.mode2v3
+*.pbxuser
+project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Xcode — сборка
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+# Package.resolved намеренно НЕ игнорируется: для приложения версии зависимостей фиксируем в репозитории
+
+# Подпись и нотаризация — никогда не коммитим
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.cer
+notarization-*.json
+
+# Локальные служебные файлы
+tmp/
