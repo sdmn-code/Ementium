@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние проекта
 
-Git-репозиторий есть (remote — GitHub `sdmn-code/Ementium`), но кода приложения пока нет: только документация и одноразовый прототип `Prototypes/FinderAXProbe` (в приложение не переносится). `Ementium.xcodeproj` и тестов **нет** — README это спецификация будущего приложения, а не описание существующего. Структура файлов, список настроек и названия типов в README — это план; при первой реализации их можно менять, но тогда нужно обновлять и README.
+Remote — GitHub `sdmn-code/Ementium`. Реализован v0.1: `Ementium.xcodeproj`, оверлей, навигация, открытие через `open -a`, тесты. Перехвата Пробела (`KeyInterceptor`, `FinderBridge`), кэша (`ImageCache`), настроек и разрешений **ещё нет** — в README они описаны как план с пометками версий. `Prototypes/FinderAXProbe` — одноразовый прототип, в приложение не переносится.
 
-Не считай описанные в README API и файлы уже написанными. Перед ссылкой на любой тип (`KeyInterceptor`, `ImageCache` и т.д.) проверяй, существует ли он.
+Перед ссылкой на любой тип из README проверяй, существует ли он. Меняешь структуру или поведение — обновляй README.
 
 ## Что это
 
@@ -14,9 +14,24 @@ Ementium — agent-приложение для macOS (`LSUIElement`), подме
 
 ## Сборка
 
-Установлен Xcode 27 (`xcode-select -p` → `/Applications/Xcode.app/Contents/Developer`), `xcodebuild` доступен, Swift 6.4. Формат проекта выбран: обычный `Ementium.xcodeproj` (не SwiftPM и не XcodeGen). Минимальная версия — macOS 14 Sonoma.
+Xcode 27, Swift 6.4. Обычный `Ementium.xcodeproj` (формат Xcode 27) с синхронизируемыми папками: новый файл в `Ementium/` или `EmentiumTests/` попадает в target сам, `project.pbxproj` для этого не трогать. Минимальная версия — macOS 14.
 
-Цель должна собираться как Universal binary (arm64 + x86_64), с выключенным App Sandbox и включённым Hardened Runtime. Apple Events не нужны.
+```bash
+xcodebuild -project Ementium.xcodeproj -scheme Ementium build     # Debug
+xcodebuild -project Ementium.xcodeproj -scheme Ementium test      # Swift Testing
+xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
+  -destination 'generic/platform=macOS' build                     # Universal
+```
+
+Без `-destination 'generic/platform=macOS'` xcodebuild собирает только архитектуру этого Mac, хотя `ARCHS` в проекте — `arm64 x86_64`. Проверка: `lipo -archs …/Ementium.app/Contents/MacOS/Ementium`.
+
+Песочница и hardened runtime — build settings (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES`), файла `.entitlements` нет. `Info.plist` — частичный (только `CFBundleDocumentTypes`), остальное генерируется из `INFOPLIST_KEY_*`; в синхронизируемой папке он исключён из ресурсов через exception set.
+
+Подпись — Apple Development, Personal Team `JW5WYVU2JQ` (бесплатный аккаунт). Developer ID и нотаризации для v1.0 пока нет.
+
+**Swift 6 и изоляция.** В app-target `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` и approachable concurrency: всё по умолчанию на главном акторе, а `nonisolated async` выполняется на акторе вызывающего. Чистая логика (`ImageDirectory`, `ViewerCommand`) помечена `nonisolated`, чтобы её можно было тестировать и звать откуда угодно. Фоновая работа — `@concurrent` (см. `ImageLoader.load`), иначе декодирование уйдёт на главный поток.
+
+**Запуск для проверки.** `open -a <путь к .app> файл`. Оверлей перекрывает **весь экран пользователя** поверх всех окон — предупреждай перед запуском и закрывай `pkill -x Ementium`. Наличие окна без скриншота: `CGWindowListCopyWindowInfo` по PID (bounds, layer, alpha). Логи — `/usr/bin/log show --predicate 'subsystem == "io.github.sdmn-code.Ementium"' --info`: в zsh голое `log` — встроенная команда оболочки.
 
 ## Архитектура: ключевые ограничения
 
@@ -42,7 +57,7 @@ Ementium — agent-приложение для macOS (`LSUIElement`), подме
 
 ## Тестирование
 
-Ключевые части (event tap, AXObserver на Finder, оверлей поверх всех окон) требуют живого Finder и выданных разрешений — юнит-тестами не покрываются. Автотестами имеет смысл покрывать `ImageDirectory` (фильтрация, сортировка, навигация, границы, режим «только выделенные») и `ImageCache` (окно предзагрузки). Остальное — ручная проверка; v0.1 по дорожной карте специально начинается с открытия файла из командной строки, чтобы оверлей можно было проверять без перехвата.
+Ключевые части (event tap, AXObserver на Finder, оверлей поверх всех окон) требуют живого Finder и выданных разрешений — юнит-тестами не покрываются. Автотестами (Swift Testing, `EmentiumTests/`) покрыты `ImageDirectory` (фильтрация, сортировка, навигация, границы, режим «только выделенные»), `ViewerCommand` (клавиши) и `ViewerView.fittedRect` (вписывание без увеличения); дальше — `ImageCache` (окно предзагрузки). Тестовые файлы — пустые, тип определяется по расширению. Внутри `#expect` нельзя вызывать `mutating`-методы — выноси результат в `let`. Остальное — ручная проверка; v0.1 по дорожной карте специально начинается с открытия файла из командной строки, чтобы оверлей можно было проверять без перехвата.
 
 ## Язык
 
