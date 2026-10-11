@@ -2,8 +2,6 @@ import AppKit
 import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let interceptionEnabledKey = "interceptionEnabled"
-
     private let state = InterceptionState()
     private let permissions = PermissionsManager()
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "app")
@@ -44,10 +42,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var statusMenu: StatusMenuController?
     private var retryTask: Task<Void, Never>?
+    private lazy var settings = SettingsWindowController(model: SettingsModel(isAccessibilityGranted: permissions.isAccessibilityGranted))
+
+    /// Тесты Xcode запускают само приложение как «хозяина» — ни перехвата, ни автозапуска, ни окон.
+    private static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        UserDefaults.standard.register(defaults: [Self.interceptionEnabledKey: true])
-        let isEnabled = UserDefaults.standard.bool(forKey: Self.interceptionEnabledKey)
+        guard !Self.isRunningTests else { return }
+        Preferences.register()
+        let store = UserDefaults.standard
+        let isEnabled = store.bool(forKey: Preferences.Key.interceptionEnabled)
         let finderIsFrontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == FinderBridge.finderBundleID
         state.update {
             $0.isEnabled = isEnabled
@@ -55,17 +61,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = StatusMenuController(isEnabled: isEnabled)
-        menu.onToggle = { [weak self] enabled in
-            UserDefaults.standard.set(enabled, forKey: Self.interceptionEnabledKey)
-            self?.state.update { $0.isEnabled = enabled }
-            self?.log.info("Перехват \(enabled ? "включён" : "выключен") из меню")
+        menu.onToggle = { enabled in
+            // Остальное сделает наблюдатель за настройками — так же, как при переключении в окне настроек.
+            UserDefaults.standard.set(enabled, forKey: Preferences.Key.interceptionEnabled)
         }
         menu.onOpenAccessibilitySettings = { [weak self] in self?.permissions.openAccessibilitySettings() }
+        menu.onOpenSettings = { [weak self] in self?.showSettings() }
+        menu.isVisible = store.bool(forKey: Preferences.Key.showMenuBarIcon)
         statusMenu = menu
 
+        settings.model.onRequestAccessibility = { [weak self] in self?.permissions.requestAccessibility() }
+        settings.model.onOpenAccessibilitySettings = { [weak self] in self?.permissions.openAccessibilitySettings() }
         viewer.onFollowingEnded = { [weak self] in self?.bridge.stopFollowing() }
+        viewer.onOpenSettings = { [weak self] in self?.showSettings() }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(preferencesDidChange(_:)), name: UserDefaults.didChangeNotification, object: nil
+        )
         observeWorkspace()
-        permissions.waitForAccessibility { [weak self] in self?.startInterception() }
+        LoginItem.enableOnFirstLaunch()
+
+        // Нет доступа (первый запуск или его отозвали) — окно с объяснением вместо внезапного системного диалога.
+        if !permissions.isAccessibilityGranted {
+            showSettings()
+        }
+        permissions.waitForAccessibility { [weak self] in
+            guard let self else { return }
+            if !self.settings.model.isAccessibilityGranted {
+                self.settings.model.isAccessibilityGranted = true
+                self.settings.model.justGranted = true
+            }
+            self.startInterception()
+        }
+    }
+
+    // Повторный запуск уже работающего Ementium (из Программ, Spotlight) — открыть настройки.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !Self.isRunningTests else { return false }
+        showSettings()
+        return false
+    }
+
+    func showSettings() {
+        settings.show()
+    }
+
+    /// Уведомление приходит на том потоке, где поменяли `UserDefaults`, — не обязательно на главном:
+    /// декодер RAW регистрирует свои значения по умолчанию на фоновом. Поэтому сначала — на главный.
+    @objc nonisolated private func preferencesDidChange(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in self?.applyPreferences() }
+    }
+
+    /// Настройки поменялись — в окне настроек или в меню иконки.
+    private func applyPreferences() {
+        let store = UserDefaults.standard
+        let enabled = store.bool(forKey: Preferences.Key.interceptionEnabled)
+        if state.snapshot.isEnabled != enabled {
+            state.update { $0.isEnabled = enabled }
+            statusMenu?.isEnabled = enabled
+            log.info("Перехват \(enabled ? "включён" : "выключен")")
+        }
+        let showIcon = store.bool(forKey: Preferences.Key.showMenuBarIcon)
+        if statusMenu?.isVisible != showIcon {
+            statusMenu?.isVisible = showIcon
+        }
     }
 
     // `open -a Ementium файл…` и «Открыть в программе» в Finder приходят сюда —
@@ -102,6 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         case .zoom(let command):
             viewer.zoom(command)
+        case .openSettings:
+            endFollowing()
+            showSettings()
         case .step, .pass, .passAndClose, .swallow:
             break
         }

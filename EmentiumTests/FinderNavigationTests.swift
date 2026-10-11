@@ -383,6 +383,22 @@ struct FollowingKeyPolicyTests {
         #expect(action(21, nil, [.maskCommand, .maskShift]) == .pass)
     }
 
+    @Test func commandCommaOpensSettingsInFollowMode() {
+        #expect(action(43, ",", .maskCommand) == .openSettings)
+    }
+
+    // Настройка «Пробел закрывает просмотр» выключена — закрывает только Esc.
+    @Test func spaceDoesNotCloseWhenDisabled() {
+        let disabled = InterceptionPolicy.followingAction(
+            keyCode: 49, characters: " ", flags: [], isRepeat: false, systemShortcuts: [], spaceClosesViewer: false
+        )
+        #expect(disabled == .swallow)
+        let escape = InterceptionPolicy.followingAction(
+            keyCode: 53, characters: nil, flags: [], isRepeat: false, systemShortcuts: [], spaceClosesViewer: false
+        )
+        #expect(escape == .close)
+    }
+
     // Масштаб в режиме «следовать»: клавиатура у Finder, клавиши масштаба разбирает перехват.
     @Test func zoomKeysZoom() {
         #expect(action(24) == .zoom(.zoomIn))

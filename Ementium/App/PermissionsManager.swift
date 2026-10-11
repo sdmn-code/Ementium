@@ -8,15 +8,14 @@ final class PermissionsManager {
 
     var isAccessibilityGranted: Bool { AXIsProcessTrusted() }
 
-    /// Если доступа нет — показывает системный диалог и ждёт выдачи, проверяя раз в секунду,
-    /// чтобы перехват включился без перезапуска.
+    /// Ждёт выдачи доступа, проверяя раз в секунду, чтобы перехват включился без перезапуска.
+    /// Системный диалог сам не показывается — его вызывает кнопка «Разрешить» в окне настроек,
+    /// где сначала объяснено, зачем доступ нужен.
     func waitForAccessibility(onGranted: @escaping () -> Void) {
         if AXIsProcessTrusted() {
             onGranted()
             return
         }
-        // Строковый ключ вместо `kAXTrustedCheckOptionPrompt`: глобальная переменная C не проходит проверку Swift 6.
-        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
@@ -27,6 +26,12 @@ final class PermissionsManager {
                 }
             }
         }
+    }
+
+    /// Системный диалог «Ementium хочет управлять компьютером…» с кнопкой «Открыть Системные настройки».
+    func requestAccessibility() {
+        // Строковый ключ вместо `kAXTrustedCheckOptionPrompt`: глобальная переменная C не проходит проверку Swift 6.
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
     func openAccessibilitySettings() {

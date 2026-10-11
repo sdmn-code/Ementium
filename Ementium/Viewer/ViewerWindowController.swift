@@ -43,8 +43,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
 
-    /// Сохранять масштаб при листании (по умолчанию — «вписать»). Переключатель — в настройках v0.4.
-    static let keepZoomWhenBrowsingKey = "keepZoomWhenBrowsing"
+    /// Настройки на момент открытия просмотра.
+    private var preferences = ViewerPreferences()
     private var directoryTask: Task<Void, Never>?
     /// Пока полный список строится, стрелки не теряются: копим шаги и применяем разом.
     private var isListPending = false
@@ -61,6 +61,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private static let fadeDuration = 0.15
 
     var isFollowing: Bool { mode == .following && state == .visible }
+
+    /// `⌘,` в режиме «свой список» (в режиме «следовать» — через перехват): открыть настройки.
+    var onOpenSettings: (() -> Void)?
 
     /// Просмотр вышел из режима «следовать» — закрылся или переключился на свой список.
     /// Мост должен перестать листать Finder.
@@ -197,6 +200,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private func present() {
         if state == .hidden {
+            // Настройки могли поменять, пока просмотр был закрыт.
+            preferences = ViewerPreferences()
+            viewerView.apply(preferences)
+            interception.update { $0.spaceClosesViewer = preferences.spaceClosesViewer }
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
             panel.alphaValue = 0
@@ -217,7 +224,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             panel.makeFirstResponder(viewerView)
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fadeDuration
+            context.duration = fadeDuration
             panel.animator().alphaValue = 1
         }
     }
@@ -246,7 +253,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         directory = nil
         followedURL = nil
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fadeDuration
+            context.duration = fadeDuration
             panel.animator().alphaValue = 0
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
@@ -286,8 +293,14 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             NSApp.terminate(nil)
         case .zoomIn, .zoomOut, .zoomFit:
             viewerView.perform(command)
+        case .openSettings:
+            close(returnFocus: false)
+            onOpenSettings?()
         }
     }
+
+    /// Плавное появление и исчезновение — по настройке.
+    private var fadeDuration: Double { preferences.animate ? Self.fadeDuration : 0 }
 
     /// Жест трекпада из перехвата (режим «следовать за Finder»): масштаб в точке под курсором.
     func gesture(_ gesture: ViewerGesture) {
@@ -345,7 +358,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         isDecoding = true
         updateSpinner()
         loadTask = Task {
-            let keepScale = UserDefaults.standard.bool(forKey: Self.keepZoomWhenBrowsingKey)
+            let keepScale = preferences.keepZoomWhenBrowsing
             // RAW: сначала встроенное превью (~10 мс), сам RAW под экран (0,4–0,6 с) — следом, подменой.
             var showsPreview = false
             if let preview = await ImageLoader.loadRawPreview(url, maxPixelSize: maxPixelSize) {

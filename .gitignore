@@ -44,3 +44,4 @@ tmp/
 # Прототипы: тестовые данные и логи (в логах могут быть имена личных файлов)
 Prototypes/*/testdata/
 Prototypes/*/logs/
+*.profraw

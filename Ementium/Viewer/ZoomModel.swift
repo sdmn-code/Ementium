@@ -3,8 +3,10 @@ import CoreGraphics
 /// Масштаб и сдвиг картинки в окне просмотра. Чистая геометрия, без AppKit — покрыта тестами.
 ///
 /// Масштаб считается от естественного размера картинки (`LoadedImage.pointSize`): 1 — это 100 %,
-/// как «Реальный размер» в Просмотре. «Вписать» — большие картинки целиком в окне, маленькие — 100 %
-/// (не растягиваем). Меньше «вписать» не уменьшаем, больше 800 % не увеличиваем.
+/// как «Реальный размер» в Просмотре. «Вписать» — большие картинки целиком в заданной доле экрана
+/// (настройка «Размер изображения на экране», 95 %), маленькие — 100 % (или тоже до этой доли, если включено
+/// «Увеличивать маленькие»). Меньше «вписать» не уменьшаем, больше 800 % (или «вписать», если оно больше)
+/// не увеличиваем.
 nonisolated struct ZoomModel: Equatable {
     /// Уровни для `+` / `-` и шаг «умного увеличения».
     static let levels: [CGFloat] = [0.5, 1, 2, 4, 8]
@@ -19,18 +21,28 @@ nonisolated struct ZoomModel: Equatable {
     private(set) var scale: CGFloat
     /// Сдвиг центра картинки от центра области, в пунктах экрана.
     private(set) var offset: CGPoint = .zero
+    /// Доля области для «вписать» (0,5…1).
+    private(set) var fitFraction: CGFloat
+    /// Растягивать ли маленькие картинки до «вписать».
+    private(set) var upscalesSmallImages: Bool
 
-    init(imageSize: CGSize, viewSize: CGSize) {
+    init(imageSize: CGSize, viewSize: CGSize, fitFraction: CGFloat = 1, upscalesSmallImages: Bool = false) {
         self.imageSize = imageSize
         self.viewSize = viewSize
+        self.fitFraction = min(max(fitFraction, 0.1), 1)
+        self.upscalesSmallImages = upscalesSmallImages
         scale = 1
         scale = fitScale
     }
 
     var fitScale: CGFloat {
         guard imageSize.width > 0, imageSize.height > 0, viewSize.width > 0, viewSize.height > 0 else { return 1 }
-        return min(1, viewSize.width / imageSize.width, viewSize.height / imageSize.height)
+        let fit = min(fitFraction * viewSize.width / imageSize.width, fitFraction * viewSize.height / imageSize.height)
+        return upscalesSmallImages ? fit : min(1, fit)
     }
+
+    /// Предел увеличения: 800 %, но не меньше «вписать» (крошечная картинка, растянутая на экран).
+    var maximumScale: CGFloat { max(Self.maxScale, fitScale) }
 
     var isFit: Bool { abs(scale - fitScale) < Self.epsilon }
 
@@ -61,7 +73,7 @@ nonisolated struct ZoomModel: Equatable {
 
     /// Следующий уровень больше текущего; якорь — точка, которая останется на месте (по умолчанию центр).
     mutating func zoomIn(around anchor: CGPoint? = nil) {
-        let next = Self.levels.first { $0 > scale + Self.epsilon } ?? Self.maxScale
+        let next = Self.levels.first { $0 > scale + Self.epsilon } ?? maximumScale
         setScale(next, around: anchor)
     }
 
@@ -99,24 +111,36 @@ nonisolated struct ZoomModel: Equatable {
     }
 
     /// Новая картинка: «вписать» или, если масштаб сохраняется при листании, тот же масштаб по центру.
+    /// Сохраняется только масштаб, выставленный вручную: «вписать» остаётся «вписать». Иначе крошечная картинка,
+    /// растянутая до экрана (тысячи процентов), передала бы следующей, большой, максимальное увеличение.
     mutating func replaceImage(size: CGSize, keepScale: Bool) {
         let previous = scale
+        let keeps = keepScale && !isFit
         imageSize = size
         offset = .zero
-        scale = keepScale ? min(max(previous, fitScale), Self.maxScale) : fitScale
+        scale = keeps ? min(max(previous, fitScale), maximumScale) : fitScale
+    }
+
+    /// Настройки «вписать» поменялись: «вписать» остаётся «вписать», остальное — в новых пределах.
+    mutating func setFitOptions(fraction: CGFloat, upscalesSmallImages: Bool) {
+        let wasFit = isFit
+        fitFraction = min(max(fraction, 0.1), 1)
+        self.upscalesSmallImages = upscalesSmallImages
+        scale = wasFit ? fitScale : min(max(scale, fitScale), maximumScale)
+        clampOffset()
     }
 
     /// Окно поменяло размер (другой экран): «вписать» остаётся «вписать», остальное — в пределах.
     mutating func resize(to size: CGSize) {
         let wasFit = isFit
         viewSize = size
-        scale = wasFit ? fitScale : min(max(scale, fitScale), Self.maxScale)
+        scale = wasFit ? fitScale : min(max(scale, fitScale), maximumScale)
         clampOffset()
     }
 
     /// Точка под якорем остаётся на месте: та же точка картинки до и после масштаба.
     private mutating func setScale(_ newScale: CGFloat, around anchor: CGPoint?) {
-        let clamped = min(max(newScale, fitScale), Self.maxScale)
+        let clamped = min(max(newScale, fitScale), maximumScale)
         let center = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
         let anchor = anchor ?? center
         let ratio = clamped / scale

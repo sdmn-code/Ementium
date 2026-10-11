@@ -154,9 +154,10 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     }
 
     private func handleViewerKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Unmanaged<CGEvent>? {
+        let snapshot = state.snapshot
         let action = InterceptionPolicy.followingAction(
             keyCode: keyCode, characters: characters(of: event), flags: event.flags, isRepeat: isRepeat,
-            systemShortcuts: state.snapshot.systemShortcuts
+            systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer
         )
         switch action {
         case .pass:
@@ -167,7 +168,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit, .zoom:
+        case .step, .close, .quit, .zoom, .openSettings:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

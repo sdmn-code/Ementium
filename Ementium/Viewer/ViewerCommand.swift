@@ -9,6 +9,7 @@ nonisolated enum ViewerCommand: Equatable {
     case zoomIn
     case zoomOut
     case zoomFit
+    case openSettings
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -24,6 +25,7 @@ nonisolated enum ViewerCommand: Equatable {
         static let keypadPlus: UInt16 = 69
         static let keypadMinus: UInt16 = 78
         static let keypadZero: UInt16 = 82
+        static let comma: UInt16 = 43       // «,» (в русской раскладке «б» — та же клавиша)
     }
 
     /// Стрелки, Esc и Пробел распознаются по физическому коду — он одинаков во всех раскладках.
@@ -47,6 +49,10 @@ nonisolated enum ViewerCommand: Equatable {
             default:
                 break
             }
+        }
+        if flags == .command, keyCode == KeyCode.comma {
+            self = .openSettings
+            return
         }
         if flags == .command {
             let character = characters?.lowercased()

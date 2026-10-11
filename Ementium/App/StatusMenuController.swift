@@ -6,8 +6,7 @@ enum InterceptionStatus {
     case failed
 }
 
-/// Иконка в строке меню: статус перехвата, выключатель и выход.
-/// Пока нет окна настроек (v0.4), это единственный способ быстро выключить перехват.
+/// Иконка в строке меню: статус перехвата, выключатель, настройки и выход.
 final class StatusMenuController: NSObject, NSMenuDelegate {
     var status = InterceptionStatus.waitingForPermission {
         didSet { updateIcon() }
@@ -17,6 +16,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
     var onToggle: ((Bool) -> Void)?
     var onOpenAccessibilitySettings: (() -> Void)?
+    var onOpenSettings: (() -> Void)?
+
+    /// Иконку можно скрыть в настройках; настройки тогда — повторным запуском или `⌘,` в просмотре.
+    var isVisible: Bool {
+        get { item.isVisible }
+        set { item.isVisible = newValue }
+    }
 
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
@@ -58,6 +64,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(toggle)
 
         menu.addItem(.separator())
+        let settings = NSMenuItem(title: "Настройки…", action: #selector(openPreferences), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(NSMenuItem(title: "Выйти из Ementium", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
@@ -68,5 +77,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openSettings() {
         onOpenAccessibilitySettings?()
+    }
+
+    @objc private func openPreferences() {
+        onOpenSettings?()
     }
 }

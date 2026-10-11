@@ -34,7 +34,6 @@ struct ViewerCommandTests {
         (49, " ", .shift),                           // ⇧Пробел
         (53, nil, .option),                          // ⌥Esc
         (124, nil, .command),                        // ⌘→
-        (43, ",", .command),                         // ⌘, — настроек пока нет
         (0, "a", NSEvent.ModifierFlags()),           // A
     ])
     func otherKeysAreIgnored(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) {
@@ -62,6 +61,12 @@ struct ViewerZoomKeyTests {
         #expect(command(24, [.command, .shift]) == .zoomIn)
         #expect(command(27, .command) == .zoomOut)
         #expect(command(29, .command) == .zoomFit)
+    }
+
+    // ⌘, — настройки; в русской раскладке это ⌘Б, та же физическая клавиша.
+    @Test func commandCommaOpensSettings() {
+        #expect(command(43, .command) == .openSettings)
+        #expect(command(43) == nil)
     }
 
     @Test func otherModifiersDoNotZoom() {

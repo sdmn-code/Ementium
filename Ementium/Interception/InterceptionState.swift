@@ -17,6 +17,8 @@ nonisolated struct InterceptionSnapshot: Sendable, Equatable {
     var isFollowingFinder = false
     /// Системные сочетания пользователя (с учётом переназначенных) — их перехват пропускает.
     var systemShortcuts: [SystemShortcut] = []
+    /// Настройка «Пробел в просмотре закрывает его»; выключена — закрывает только Esc.
+    var spaceClosesViewer = true
 }
 
 /// Общий снимок для трёх потоков: главного, `FinderBridge` и `KeyInterceptor`.

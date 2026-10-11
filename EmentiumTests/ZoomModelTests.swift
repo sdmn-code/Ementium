@@ -111,4 +111,14 @@ struct ZoomModelTests {
         #expect(zoom.scale == 1)
         #expect(zoom.offset == .zero)
     }
+
+    // Крошечная картинка, растянутая до экрана, — это «вписать» в тысячи процентов, а не выбранный масштаб:
+    // следующая большая должна открыться вписанной, а не с увеличением 800 %.
+    @Test func fitStaysFitWhenKeepingScale() {
+        var zoom = ZoomModel(imageSize: CGSize(width: 16, height: 16), viewSize: screen, upscalesSmallImages: true)
+        #expect(zoom.isFit)
+        zoom.replaceImage(size: CGSize(width: 6000, height: 4000), keepScale: true)
+        #expect(zoom.isFit)
+        #expect(zoom.scale < 1)
+    }
 }

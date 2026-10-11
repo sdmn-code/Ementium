@@ -18,6 +18,8 @@ nonisolated enum ViewerKeyAction: Equatable {
     case swallow
     /// Масштаб картинки (`+`, `-`, `0`, с ⌘ и без).
     case zoom(ViewerCommand)
+    /// `⌘,` — закрыть просмотр и открыть настройки Ementium.
+    case openSettings
 }
 
 /// Жест трекпада при открытом просмотре. Жесты масштаба macOS отдаёт активному приложению — обычно Finder,
@@ -67,7 +69,7 @@ nonisolated enum InterceptionPolicy {
     /// Список — сочетания из настроек пользователя (`SystemShortcuts`) и несколько неназначаемых.
     static func followingAction(
         keyCode: UInt16, characters: String?, flags: CGEventFlags, isRepeat: Bool,
-        systemShortcuts: [SystemShortcut]
+        systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true
     ) -> ViewerKeyAction {
         let modifiers = flags.intersection(SystemShortcuts.modifierMask)
         if let fixed = fixedSystemShortcut(keyCode: keyCode, modifiers: modifiers) {
@@ -92,7 +94,12 @@ nonisolated enum InterceptionPolicy {
         switch ViewerCommand(keyCode: keyCode, characters: characters, modifiers: nsModifiers) {
         case .close?:
             // Автоповтор Пробела, которым открыли просмотр, не должен его тут же закрыть.
-            return isRepeat ? .swallow : .close
+            if isRepeat { return .swallow }
+            // Пробел закрывает, только если это включено в настройках; Esc закрывает всегда.
+            if keyCode == KeyCode.space, !spaceClosesViewer { return .swallow }
+            return .close
+        case .openSettings?:
+            return .openSettings
         case .quit?:
             return .quit
         case let zoom? where [.zoomIn, .zoomOut, .zoomFit].contains(zoom):

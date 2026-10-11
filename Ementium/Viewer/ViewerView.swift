@@ -20,6 +20,10 @@ final class ViewerView: NSView {
 
     private(set) var zoom: ZoomModel?
     private var isDragging = false
+    /// Настройки, применённые при последнем открытии просмотра.
+    private var fitFraction: CGFloat = 1
+    private var upscalesSmallImages = false
+    private var spaceClosesViewer = true
     private var lastDragPoint: CGPoint = .zero
 
     private static let zoomAnimationDuration = 0.15
@@ -27,7 +31,7 @@ final class ViewerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
+        apply(ViewerPreferences())
 
         imageLayer.contentsGravity = .resizeAspect
         imageLayer.minificationFilter = .trilinear
@@ -102,13 +106,32 @@ final class ViewerView: NSView {
         if spinning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
     }
 
+    /// Настройки просмотра: фон (цвет и затемнение), «вписать», Пробел.
+    func apply(_ preferences: ViewerPreferences) {
+        let color = preferences.color
+        layer?.backgroundColor = CGColor(
+            srgbRed: color.red, green: color.green, blue: color.blue, alpha: preferences.dimming
+        )
+        fitFraction = preferences.screenFraction
+        upscalesSmallImages = preferences.upscaleSmallImages
+        spaceClosesViewer = preferences.spaceClosesViewer
+        if var current = zoom {
+            current.setFitOptions(fraction: fitFraction, upscalesSmallImages: upscalesSmallImages)
+            zoom = current
+            applyZoom(animated: false)
+        }
+    }
+
     /// Новая картинка. `keepScale` — сохранить масштаб предыдущей (иначе «вписать»).
     func show(_ loaded: LoadedImage, keepScale: Bool) {
         if var current = zoom {
             current.replaceImage(size: loaded.pointSize, keepScale: keepScale)
             zoom = current
         } else {
-            zoom = ZoomModel(imageSize: loaded.pointSize, viewSize: bounds.size)
+            zoom = ZoomModel(
+                imageSize: loaded.pointSize, viewSize: bounds.size,
+                fitFraction: fitFraction, upscalesSmallImages: upscalesSmallImages
+            )
         }
         imageLayer.contents = loaded.image
         messageLabel.isHidden = true
@@ -316,6 +339,8 @@ final class ViewerView: NSView {
         guard let command = ViewerCommand(event: event) else { return }
         // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно.
         if command == .close, event.isARepeat { return }
+        // Пробел закрывает, только если это включено в настройках; Esc закрывает всегда.
+        if command == .close, event.keyCode == 49, !spaceClosesViewer { return }
         handle(command)
     }
 
