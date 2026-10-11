@@ -38,6 +38,13 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var directory: ImageDirectory?
     private var followedURL: URL?
     private var loadTask: Task<Void, Never>?
+    /// Текущая картинка в том разрешении, в каком она показана, — от неё решаем, нужно ли больше деталей.
+    private var loaded: LoadedImage?
+    /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
+    private var detailTask: Task<Void, Never>?
+
+    /// Сохранять масштаб при листании (по умолчанию — «вписать»). Переключатель — в настройках v0.4.
+    static let keepZoomWhenBrowsingKey = "keepZoomWhenBrowsing"
     private var directoryTask: Task<Void, Never>?
     /// Пока полный список строится, стрелки не теряются: копим шаги и применяем разом.
     private var isListPending = false
@@ -83,6 +90,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         panel.animationBehavior = .none
 
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
+        viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
 
         // `open -a` активирует Ementium, поэтому запоминаем, кто был активен до него,
         // чтобы вернуть фокус после закрытия.
@@ -226,6 +234,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             $0.isFollowingFinder = false
         }
         loadTask?.cancel()
+        detailTask?.cancel()
+        detailTask = nil
+        loaded = nil
         directoryTask?.cancel()
         isNavigationBusy = false
         isDecoding = false
@@ -273,6 +284,51 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             close(returnFocus: true)
         case .quit:
             NSApp.terminate(nil)
+        case .zoomIn, .zoomOut, .zoomFit:
+            viewerView.perform(command)
+        }
+    }
+
+    /// Жест трекпада из перехвата (режим «следовать за Finder»): масштаб в точке под курсором.
+    func gesture(_ gesture: ViewerGesture) {
+        guard state == .visible else { return }
+        let location = NSEvent.mouseLocation
+        switch gesture {
+        case .magnify(let magnification):
+            viewerView.magnify(by: magnification, atScreenPoint: location)
+        case .smartMagnify:
+            viewerView.smartMagnify(atScreenPoint: location)
+        }
+    }
+
+    /// Масштаб из перехвата (режим «следовать за Finder»: клавиатура у Finder).
+    func zoom(_ command: ViewerCommand) {
+        guard state == .visible else { return }
+        viewerView.perform(command)
+    }
+
+    /// При увеличении сверх декодированного разрешения — декодировать оригинал в фоне (до ~100 Мп),
+    /// пока показывая то, что есть. Без этого при 200–400 % было бы мыло.
+    private func loadDetailIfNeeded(for zoom: ZoomModel) {
+        guard let url = currentURL, let current = loaded, detailTask == nil else { return }
+        let backingScale = panel.screen?.backingScaleFactor ?? 2
+        let shownLongSide = max(zoom.imageRect.width, zoom.imageRect.height) * backingScale
+        let limit = ImageLoader.fullResolutionLimit(for: current.pixelSize)
+        // Уже показано не хуже нужного — или лучше уже не будет.
+        guard shownLongSide > CGFloat(current.decodedLongSide) * 1.05,
+              current.decodedLongSide < limit else { return }
+
+        isDecoding = true
+        updateSpinner()
+        detailTask = Task {
+            let detailed = try? await ImageLoader.load(url, maxPixelSize: limit)
+            guard !Task.isCancelled, currentURL == url else { return }
+            detailTask = nil
+            isDecoding = false
+            updateSpinner()
+            guard let detailed else { return }
+            loaded = detailed
+            viewerView.upgrade(detailed.image)
         }
     }
 
@@ -284,6 +340,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         let maxPixelSize = Int(max(frame.width, frame.height) * scale)
 
         loadTask?.cancel()
+        detailTask?.cancel()
+        detailTask = nil
         isDecoding = true
         updateSpinner()
         loadTask = Task {
@@ -293,11 +351,16 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 guard !Task.isCancelled, currentURL == url else { return }
                 isDecoding = false
                 updateSpinner()
-                viewerView.show(loaded)
+                self.loaded = loaded
+                let keepScale = UserDefaults.standard.bool(forKey: Self.keepZoomWhenBrowsingKey)
+                viewerView.show(loaded, keepScale: keepScale)
+                // Масштаб сохранился с прошлой картинки — ей тоже может понадобиться больше деталей.
+                if keepScale, let zoom = viewerView.zoom { loadDetailIfNeeded(for: zoom) }
             } catch {
                 guard !Task.isCancelled, currentURL == url else { return }
                 isDecoding = false
                 updateSpinner()
+                self.loaded = nil
                 log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private)")
                 viewerView.showError(fileName: url.lastPathComponent)
             }

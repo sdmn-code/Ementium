@@ -23,6 +23,8 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
   -destination 'generic/platform=macOS' build                     # Universal
 ```
 
+**Инкрементальная сборка может врать.** После добавления варианта в перечисление (`ViewerKeyAction.zoom`) тесты на инкрементальной сборке массово падали с бессмысленными значениями (`.step` вместо `.pass`), а на чистой — проходили. Странные падения после изменения типов — сначала прогнать на чистой папке (`-derivedDataPath` в новую). `install.sh` всегда собирает с нуля.
+
 Без `-destination 'generic/platform=macOS'` xcodebuild собирает только архитектуру этого Mac, хотя `ARCHS` в проекте — `arm64 x86_64`. Проверка: `lipo -archs …/Ementium.app/Contents/MacOS/Ementium`.
 
 Песочница и hardened runtime — build settings (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES`), файла `.entitlements` нет. `Info.plist` — частичный (только `CFBundleDocumentTypes`), остальное генерируется из `INFOPLIST_KEY_*`; в синхронизируемой папке он исключён из ресурсов через exception set.

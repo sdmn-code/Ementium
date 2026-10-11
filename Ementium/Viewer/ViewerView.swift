@@ -1,16 +1,28 @@
 import AppKit
 
-/// Затемнённый фон и изображение по центру. Большие изображения вписываются в экран,
-/// маленькие показываются в естественном размере и не растягиваются.
+/// Затемнённый фон и изображение. Большие изображения вписываются в экран, маленькие показываются
+/// в естественном размере и не растягиваются. Масштаб — клавишами и жестами трекпада, сдвиг увеличенной
+/// картинки — перетаскиванием и прокруткой. Геометрия — в `ZoomModel`.
 final class ViewerView: NSView {
     var onCommand: ((ViewerCommand) -> Void)?
+    /// Масштаб изменился — контроллер решает, не пора ли декодировать картинку в большем разрешении.
+    var onZoomChanged: ((ZoomModel) -> Void)?
 
     private let imageLayer = CALayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     /// Индикатор ожидания: Finder пропускает документы между картинками или картинка долго декодируется.
     private let spinnerBackground = NSView()
     private let spinner = NSProgressIndicator()
-    private var imageSize: CGSize = .zero
+    /// Плашка масштаба: «200 %» или «Вписать» внизу экрана на секунду.
+    private let zoomBadge = NSView()
+    private let zoomLabel = NSTextField(labelWithString: "")
+    private var zoomBadgeHide: Task<Void, Never>?
+
+    private(set) var zoom: ZoomModel?
+    private var isDragging = false
+    private var lastDragPoint: CGPoint = .zero
+
+    private static let zoomAnimationDuration = 0.15
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -54,7 +66,33 @@ final class ViewerView: NSView {
             spinner.centerXAnchor.constraint(equalTo: spinnerBackground.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: spinnerBackground.centerYAnchor),
         ])
+
+        zoomBadge.wantsLayer = true
+        zoomBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
+        zoomBadge.layer?.cornerRadius = 10
+        zoomBadge.alphaValue = 0
+        zoomBadge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(zoomBadge)
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: 15, weight: .medium)
+        zoomLabel.textColor = .white
+        zoomLabel.translatesAutoresizingMaskIntoConstraints = false
+        zoomBadge.addSubview(zoomLabel)
+        NSLayoutConstraint.activate([
+            zoomBadge.centerXAnchor.constraint(equalTo: centerXAnchor),
+            zoomBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -48),
+            zoomLabel.leadingAnchor.constraint(equalTo: zoomBadge.leadingAnchor, constant: 14),
+            zoomLabel.trailingAnchor.constraint(equalTo: zoomBadge.trailingAnchor, constant: -14),
+            zoomLabel.topAnchor.constraint(equalTo: zoomBadge.topAnchor, constant: 7),
+            zoomLabel.bottomAnchor.constraint(equalTo: zoomBadge.bottomAnchor, constant: -7),
+        ])
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) не используется")
+    }
+
+    // MARK: - Содержимое
 
     var isSpinning: Bool { !spinnerBackground.isHidden }
 
@@ -64,55 +102,213 @@ final class ViewerView: NSView {
         if spinning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) не используется")
+    /// Новая картинка. `keepScale` — сохранить масштаб предыдущей (иначе «вписать»).
+    func show(_ loaded: LoadedImage, keepScale: Bool) {
+        if var current = zoom {
+            current.replaceImage(size: loaded.pointSize, keepScale: keepScale)
+            zoom = current
+        } else {
+            zoom = ZoomModel(imageSize: loaded.pointSize, viewSize: bounds.size)
+        }
+        imageLayer.contents = loaded.image
+        messageLabel.isHidden = true
+        applyZoom(animated: false)
     }
 
-    func show(_ loaded: LoadedImage) {
-        imageLayer.contents = loaded.image
-        imageSize = loaded.pointSize
-        messageLabel.isHidden = true
-        needsLayout = true
+    /// Та же картинка в большем разрешении — подменяем пиксели, не трогая масштаб и сдвиг.
+    func upgrade(_ image: CGImage) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        imageLayer.contents = image
+        CATransaction.commit()
     }
 
     func showError(fileName: String) {
         imageLayer.contents = nil
-        imageSize = .zero
+        zoom = nil
         messageLabel.stringValue = "\(fileName)\nНе удалось открыть"
         messageLabel.isHidden = false
-        needsLayout = true
+        applyZoom(animated: false)
     }
 
     func clear() {
         imageLayer.contents = nil
-        imageSize = .zero
+        zoom = nil
         messageLabel.isHidden = true
+        isDragging = false
+        zoomBadge.alphaValue = 0
+        applyZoom(animated: false)
     }
 
     override func layout() {
         super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        imageLayer.frame = Self.fittedRect(imageSize: imageSize, in: bounds)
-        CATransaction.commit()
+        if var current = zoom, current.viewSize != bounds.size {
+            current.resize(to: bounds.size)
+            zoom = current
+        }
+        applyZoom(animated: false)
     }
 
-    /// Прямоугольник изображения: по центру, уменьшен до границ, но никогда не увеличен.
+    /// Прямоугольник изображения при «вписать»: по центру, уменьшен до границ, но никогда не увеличен.
     nonisolated static func fittedRect(imageSize: CGSize, in bounds: CGRect) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else { return .zero }
-        let scale = min(1, bounds.width / imageSize.width, bounds.height / imageSize.height)
-        let width = (imageSize.width * scale).rounded()
-        let height = (imageSize.height * scale).rounded()
-        return CGRect(
-            x: bounds.minX + ((bounds.width - width) / 2).rounded(),
-            y: bounds.minY + ((bounds.height - height) / 2).rounded(),
-            width: width,
-            height: height
-        )
+        ZoomModel(imageSize: imageSize, viewSize: bounds.size).imageRect.offsetBy(dx: bounds.minX, dy: bounds.minY)
     }
 
-    // MARK: - Клавиатура
+    private func applyZoom(animated: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        if animated { CATransaction.setAnimationDuration(Self.zoomAnimationDuration) }
+        imageLayer.frame = zoom?.imageRect ?? .zero
+        CATransaction.commit()
+        updateCursor()
+    }
+
+    // MARK: - Масштаб
+
+    /// Клавиши и «умное увеличение»: плавно, с плашкой.
+    func perform(_ command: ViewerCommand, at anchor: CGPoint? = nil) {
+        guard var current = zoom else { return }
+        switch command {
+        case .zoomIn: current.zoomIn(around: anchor)
+        case .zoomOut: current.zoomOut(around: anchor)
+        case .zoomFit: current.zoomToFit()
+        default: return
+        }
+        commit(current, animated: true)
+    }
+
+    private func commit(_ updated: ZoomModel, animated: Bool) {
+        let scaleChanged = updated.scale != zoom?.scale
+        zoom = updated
+        applyZoom(animated: animated)
+        if scaleChanged {
+            showZoomBadge(updated.label)
+            onZoomChanged?(updated)
+        }
+    }
+
+    private func showZoomBadge(_ text: String) {
+        zoomLabel.stringValue = text
+        zoomBadge.alphaValue = 1
+        zoomBadgeHide?.cancel()
+        zoomBadgeHide = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                zoomBadge.animator().alphaValue = 0
+            }, completionHandler: nil)
+        }
+    }
+
+    // MARK: - Трекпад и мышь
+
+    private func point(of event: NSEvent) -> CGPoint {
+        convert(event.locationInWindow, from: nil)
+    }
+
+    /// Жесты из перехвата (режим «следовать за Finder»): точка — в координатах экрана.
+    func magnify(by magnification: CGFloat, atScreenPoint screenPoint: CGPoint) {
+        guard var current = zoom else { return }
+        current.magnify(by: magnification, around: point(fromScreen: screenPoint))
+        commit(current, animated: false)
+    }
+
+    func smartMagnify(atScreenPoint screenPoint: CGPoint) {
+        guard var current = zoom else { return }
+        current.toggleSmartZoom(at: point(fromScreen: screenPoint))
+        commit(current, animated: true)
+    }
+
+    private func point(fromScreen screenPoint: CGPoint) -> CGPoint {
+        guard let window else { return CGPoint(x: bounds.midX, y: bounds.midY) }
+        return convert(window.convertPoint(fromScreen: screenPoint), from: nil)
+    }
+
+    /// Сведение и разведение двух пальцев — плавно, в точке между пальцами.
+    override func magnify(with event: NSEvent) {
+        guard var current = zoom else { return }
+        current.magnify(by: event.magnification, around: point(of: event))
+        commit(current, animated: false)
+    }
+
+    /// Двойное касание двумя пальцами — «вписать» ↔ 100 %.
+    override func smartMagnify(with event: NSEvent) {
+        guard var current = zoom else { return }
+        current.toggleSmartZoom(at: point(of: event))
+        commit(current, animated: true)
+    }
+
+    /// Прокрутка двумя пальцами или колёсиком двигает увеличенную картинку.
+    override func scrollWheel(with event: NSEvent) {
+        guard var current = zoom, current.canPan else { return }
+        // Колёсико мыши даёт строки, трекпад — точные пункты.
+        let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+        current.pan(by: CGVector(dx: event.scrollingDeltaX * factor, dy: -event.scrollingDeltaY * factor))
+        commit(current, animated: false)
+    }
+
+    // Окно просмотра в режиме «следовать за Finder» неактивно — первый же клик должен работать.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            guard var current = zoom else { return }
+            current.toggleSmartZoom(at: point(of: event))
+            commit(current, animated: true)
+            return
+        }
+        guard zoom?.canPan == true else { return }
+        isDragging = true
+        lastDragPoint = point(of: event)
+        updateCursor()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging, var current = zoom else { return }
+        let location = point(of: event)
+        current.pan(by: CGVector(dx: location.x - lastDragPoint.x, dy: location.y - lastDragPoint.y))
+        lastDragPoint = location
+        commit(current, animated: false)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isDragging = false
+        updateCursor()
+    }
+
+    // MARK: - Курсор
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        // `.activeAlways`: в режиме «следовать за Finder» Ementium неактивен, а курсор всё равно нужен.
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.cursorUpdate, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        updateCursor()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateCursor()
+    }
+
+    private func updateCursor() {
+        if isDragging {
+            NSCursor.closedHand.set()
+        } else if zoom?.canPan == true {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    // MARK: - Клавиатура (режим «свой список»; в режиме «следовать» клавиши разбирает перехват)
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -120,7 +316,7 @@ final class ViewerView: NSView {
         guard let command = ViewerCommand(event: event) else { return }
         // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно.
         if command == .close, event.isARepeat { return }
-        onCommand?(command)
+        handle(command)
     }
 
     // ⌘-сочетания приходят сюда раньше, чем в главное меню. Пока открыт просмотр, поглощаем их все:
@@ -130,8 +326,17 @@ final class ViewerView: NSView {
             return super.performKeyEquivalent(with: event)
         }
         if let command = ViewerCommand(event: event) {
-            onCommand?(command)
+            handle(command)
         }
         return true
+    }
+
+    private func handle(_ command: ViewerCommand) {
+        switch command {
+        case .zoomIn, .zoomOut, .zoomFit:
+            perform(command)
+        default:
+            onCommand?(command)
+        }
     }
 }

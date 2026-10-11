@@ -16,6 +16,18 @@ nonisolated enum ViewerKeyAction: Equatable {
     case passAndClose
     /// Проглотить: иначе Finder за оверлеем невидимо переименовал бы, удалил или выделил всё.
     case swallow
+    /// Масштаб картинки (`+`, `-`, `0`, с ⌘ и без).
+    case zoom(ViewerCommand)
+}
+
+/// Жест трекпада при открытом просмотре. Жесты масштаба macOS отдаёт активному приложению — обычно Finder,
+/// а не панели просмотра под курсором (прокрутка и клики при этом доходят до панели), поэтому их
+/// забирает перехват и передаёт просмотру — в обоих режимах.
+nonisolated enum ViewerGesture: Equatable, Sendable {
+    /// Сведение / разведение двух пальцев: приращение масштаба (0,1 = +10 %).
+    case magnify(CGFloat)
+    /// Двойное касание двумя пальцами.
+    case smartMagnify
 }
 
 /// Решение «поглотить Пробел или пропустить в Finder». Чистая функция: никаких обращений к системе,
@@ -83,6 +95,8 @@ nonisolated enum InterceptionPolicy {
             return isRepeat ? .swallow : .close
         case .quit?:
             return .quit
+        case let zoom? where [.zoomIn, .zoomOut, .zoomFit].contains(zoom):
+            return .zoom(zoom)
         default:
             return .swallow
         }

@@ -34,6 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 Task { @MainActor in self?.handleViewerKey(action) }
             }
+        },
+        onViewerGesture: { [weak self] gesture in
+            // Главная очередь сохраняет порядок жестов: масштаб меняется плавно, без скачков назад.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.viewer.gesture(gesture) }
+            }
         }
     )
     private var statusMenu: StatusMenuController?
@@ -94,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             endFollowing()
         case .quit:
             NSApp.terminate(nil)
+        case .zoom(let command):
+            viewer.zoom(command)
         case .step, .pass, .passAndClose, .swallow:
             break
         }

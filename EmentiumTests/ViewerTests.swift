@@ -42,6 +42,34 @@ struct ViewerCommandTests {
     }
 }
 
+struct ViewerZoomKeyTests {
+    private func command(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags = []) -> ViewerCommand? {
+        ViewerCommand(keyCode: keyCode, characters: nil, modifiers: modifiers)
+    }
+
+    @Test func plusMinusZeroZoom() {
+        #expect(command(24) == .zoomIn)                    // =
+        #expect(command(24, .shift) == .zoomIn)            // + (⇧=)
+        #expect(command(27) == .zoomOut)                   // -
+        #expect(command(29) == .zoomFit)                   // 0
+    }
+
+    @Test func keypadAndCommandVariantsZoom() {
+        #expect(command(69, .numericPad) == .zoomIn)       // + на цифровом блоке
+        #expect(command(78, .numericPad) == .zoomOut)
+        #expect(command(82, .numericPad) == .zoomFit)
+        #expect(command(24, .command) == .zoomIn)          // ⌘+ как в Просмотре
+        #expect(command(24, [.command, .shift]) == .zoomIn)
+        #expect(command(27, .command) == .zoomOut)
+        #expect(command(29, .command) == .zoomFit)
+    }
+
+    @Test func otherModifiersDoNotZoom() {
+        #expect(command(24, .option) == nil)
+        #expect(command(27, .control) == nil)
+    }
+}
+
 struct FittedRectTests {
     private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
 

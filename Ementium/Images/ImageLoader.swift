@@ -8,6 +8,13 @@ nonisolated struct LoadedImage: @unchecked Sendable {
     /// Естественный размер в пунктах экрана с учётом EXIF-поворота. Обычно 1 пиксель = 1 пункт;
     /// у Retina-снимков (144 и 216 dpi) — 2 и 3 пикселя на пункт, чтобы скриншот был размером с исходное окно.
     let pointSize: CGSize
+    /// Размер оригинала в пикселях с учётом EXIF-поворота — чтобы при увеличении понять,
+    /// есть ли смысл декодировать картинку заново в большем разрешении.
+    let pixelSize: CGSize
+
+    /// Сколько пикселей по длинной стороне декодировано сейчас.
+    var decodedLongSide: Int { max(image.width, image.height) }
+    var originalLongSide: Int { Int(max(pixelSize.width, pixelSize.height)) }
 }
 
 nonisolated enum ImageLoaderError: Error {
@@ -51,9 +58,22 @@ nonisolated enum ImageLoader {
         let height = pixelHeight > 0 ? pixelHeight : image.height
         let scale = pixelsPerPoint(dpi: properties[kCGImagePropertyDPIWidth] as? Double)
         var size = CGSize(width: Double(width) / scale, height: Double(height) / scale)
-        if rotated { size = CGSize(width: size.height, height: size.width) }
+        var pixels = CGSize(width: width, height: height)
+        if rotated {
+            size = CGSize(width: size.height, height: size.width)
+            pixels = CGSize(width: pixels.height, height: pixels.width)
+        }
 
-        return LoadedImage(image: image, pointSize: size)
+        return LoadedImage(image: image, pointSize: size, pixelSize: pixels)
+    }
+
+    /// Предел для декодирования в полном разрешении: не больше ~100 Мп (около 400 МБ в памяти).
+    /// Возвращает длинную сторону, до которой уменьшать оригинал.
+    static func fullResolutionLimit(for pixelSize: CGSize, maxPixels: Double = 100_000_000) -> Int {
+        let longSide = max(pixelSize.width, pixelSize.height)
+        let area = Double(pixelSize.width * pixelSize.height)
+        guard area > maxPixels else { return Int(longSide) }
+        return Int((Double(longSide) * (maxPixels / area).squareRoot()).rounded(.down))
     }
 
     /// DPI учитывается только у Retina-снимков. Фото с 240 или 300 dpi после экспорта или скана

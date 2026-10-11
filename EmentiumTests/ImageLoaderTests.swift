@@ -100,6 +100,27 @@ final class ImageLoaderTests {
         }
     }
 
+    @Test func originalPixelSizeIsKeptWhenDecodedSmaller() async throws {
+        let url = try makeImage("big.jpg", width: 3000, height: 1500)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 1000)
+        #expect(loaded.pixelSize == CGSize(width: 3000, height: 1500))
+        #expect(loaded.decodedLongSide == 1000)
+        #expect(loaded.originalLongSide == 3000)
+    }
+
+    @Test func originalPixelSizeFollowsRotation() async throws {
+        let url = try makeImage("rotated-big.jpg", width: 200, height: 100, orientation: 6)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 5000)
+        #expect(loaded.pixelSize == CGSize(width: 100, height: 200))
+    }
+
+    // Предел полного разрешения — ~100 Мп: 24 Мп целиком, 200 Мп уменьшаются в √2 раз по стороне.
+    @Test func fullResolutionLimit() {
+        #expect(ImageLoader.fullResolutionLimit(for: CGSize(width: 6000, height: 4000)) == 6000)
+        let limit = ImageLoader.fullResolutionLimit(for: CGSize(width: 20000, height: 10000))
+        #expect(abs(limit - 14142) <= 1)
+    }
+
     @Test(arguments: [(144.0, 2.0), (216, 3), (72, 1), (300, 1), (143.5, 2)])
     func pixelsPerPoint(dpi: Double, expected: Double) {
         #expect(ImageLoader.pixelsPerPoint(dpi: dpi) == expected)

@@ -383,6 +383,15 @@ struct FollowingKeyPolicyTests {
         #expect(action(21, nil, [.maskCommand, .maskShift]) == .pass)
     }
 
+    // Масштаб в режиме «следовать»: клавиатура у Finder, клавиши масштаба разбирает перехват.
+    @Test func zoomKeysZoom() {
+        #expect(action(24) == .zoom(.zoomIn))
+        #expect(action(24, nil, .maskShift) == .zoom(.zoomIn))
+        #expect(action(27, nil, .maskCommand) == .zoom(.zoomOut))
+        #expect(action(82, nil, .maskNumericPad) == .zoom(.zoomFit))
+        #expect(action(24, nil, [], repeat: true) == .zoom(.zoomIn))  // зажатый «+» тоже увеличивает
+    }
+
     // Ничего не должно невидимо сработать в Finder за оверлеем.
     static let finderShortcuts: [(UInt16, CGEventFlags)] = [
         (36, []),                                             // Return — переименование

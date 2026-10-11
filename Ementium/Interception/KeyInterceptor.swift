@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import os
@@ -17,6 +18,13 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     private let onAbsorb: @Sendable (_ urls: [URL]) -> Void
     /// Клавиша при открытом просмотре в режиме «следовать за Finder».
     private let onViewerKey: @Sendable (ViewerKeyAction) -> Void
+    /// Жест масштаба при открытом просмотре в режиме «следовать за Finder».
+    private let onViewerGesture: @Sendable (ViewerGesture) -> Void
+
+    /// Все жесты трекпада приходят в перехват одним системным типом 29 («жест»); какой это жест —
+    /// масштаб, двойное касание, сырые касания — видно только после преобразования в `NSEvent`
+    /// (выяснено диагностикой: типы AppKit 30 и 32 на системном уровне не встречаются).
+    private static let gestureEventType: UInt32 = 29
     private let thread = RunLoopThread(name: "Ementium.KeyInterceptor")
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "interceptor")
 
@@ -27,11 +35,13 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     init(
         state: InterceptionState,
         onAbsorb: @escaping @Sendable (_ urls: [URL]) -> Void,
-        onViewerKey: @escaping @Sendable (ViewerKeyAction) -> Void
+        onViewerKey: @escaping @Sendable (ViewerKeyAction) -> Void,
+        onViewerGesture: @escaping @Sendable (ViewerGesture) -> Void
     ) {
         self.state = state
         self.onAbsorb = onAbsorb
         self.onViewerKey = onViewerKey
+        self.onViewerGesture = onViewerGesture
     }
 
     /// Создаёт tap. Возвращает `false`, если система не дала доступ (нет разрешения).
@@ -49,6 +59,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     private func createTap() -> Bool {
         if tap != nil { return true }
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+            | (1 << Self.gestureEventType)
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             return Unmanaged<KeyInterceptor>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
@@ -113,6 +124,31 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
             }
 
         default:
+            if type.rawValue == Self.gestureEventType {
+                return handleGesture(event)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+    }
+
+    /// Жест масштаба при открытом просмотре — просмотру, а не активному приложению (обычно Finder:
+    /// иначе он за оверлеем ещё и поменял бы размер значков).
+    private func handleGesture(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        // Жесты идут постоянно (любое касание трекпада) — разбираем только при открытом просмотре.
+        // В любом режиме: и при двух выделенных картинках активен Finder, и жест ушёл бы ему, а не панели.
+        // Поглощаем, чтобы при активном Ementium (`open -a`) жест не пришёл ещё и панели напрямую.
+        guard state.snapshot.isViewerVisible, let gesture = NSEvent(cgEvent: event) else {
+            return Unmanaged.passUnretained(event)
+        }
+        switch gesture.type {
+        case .magnify:
+            if gesture.magnification != 0 { onViewerGesture(.magnify(gesture.magnification)) }
+            return nil
+        case .smartMagnify:
+            onViewerGesture(.smartMagnify)
+            return nil
+        default:
+            // Прокрутка, нажатия, сырые касания — дальше как обычно (прокрутку получит панель под курсором).
             return Unmanaged.passUnretained(event)
         }
     }
@@ -131,7 +167,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit:
+        case .step, .close, .quit, .zoom:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

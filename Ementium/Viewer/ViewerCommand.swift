@@ -6,6 +6,9 @@ nonisolated enum ViewerCommand: Equatable {
     case previous
     case close
     case quit
+    case zoomIn
+    case zoomOut
+    case zoomFit
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -15,6 +18,12 @@ nonisolated enum ViewerCommand: Equatable {
         static let down: UInt16 = 125
         static let up: UInt16 = 126
         static let qwertyQ: UInt16 = 12
+        static let equal: UInt16 = 24       // «=» и «+» (с ⇧)
+        static let minus: UInt16 = 27
+        static let zero: UInt16 = 29
+        static let keypadPlus: UInt16 = 69
+        static let keypadMinus: UInt16 = 78
+        static let keypadZero: UInt16 = 82
     }
 
     /// Стрелки, Esc и Пробел распознаются по физическому коду — он одинаков во всех раскладках.
@@ -22,6 +31,23 @@ nonisolated enum ViewerCommand: Equatable {
     /// для нелатинских раскладок, где символ не «q» (например, «й»).
     init?(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) {
         let flags = modifiers.intersection([.command, .option, .control, .shift])
+        // Масштаб: «+», «-», «0» — с ⌘ и без (как в Просмотре), на основной клавиатуре и цифровом блоке.
+        // «+» на основной клавиатуре — это ⇧= , поэтому ⇧ тоже допускается.
+        if flags.isSubset(of: [.command, .shift]) {
+            switch keyCode {
+            case KeyCode.equal, KeyCode.keypadPlus:
+                self = .zoomIn
+                return
+            case KeyCode.minus, KeyCode.keypadMinus:
+                self = .zoomOut
+                return
+            case KeyCode.zero, KeyCode.keypadZero:
+                self = .zoomFit
+                return
+            default:
+                break
+            }
+        }
         if flags == .command {
             let character = characters?.lowercased()
             let isLatinLetter = character?.first.map { $0.isASCII && $0.isLetter } ?? false

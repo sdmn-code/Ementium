@@ -17,6 +17,10 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 # Spotlight регистрирует найденные приложения в LaunchServices — папку сборки он индексировать не должен.
 mkdir -p build && touch build/.metadata_never_index
 
+# Всегда с чистой папки: инкрементальная сборка после изменения перечислений Swift собирала
+# несовместимые части (тесты видели .step вместо .pass) — в установленное приложение это попасть не должно.
+rm -rf build/DerivedData
+
 echo "→ Сборка…"
 xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath build/DerivedData -quiet build
