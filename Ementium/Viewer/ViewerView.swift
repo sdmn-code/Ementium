@@ -7,6 +7,9 @@ final class ViewerView: NSView {
 
     private let imageLayer = CALayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
+    /// Индикатор ожидания: Finder пропускает документы между картинками или картинка долго декодируется.
+    private let spinnerBackground = NSView()
+    private let spinner = NSProgressIndicator()
     private var imageSize: CGSize = .zero
 
     override init(frame frameRect: NSRect) {
@@ -30,6 +33,35 @@ final class ViewerView: NSView {
             messageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             messageLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.8),
         ])
+
+        // Подложка, чтобы индикатор был виден и на светлой картинке.
+        spinnerBackground.wantsLayer = true
+        spinnerBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        spinnerBackground.layer?.cornerRadius = 14
+        spinnerBackground.isHidden = true
+        spinnerBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(spinnerBackground)
+        spinner.style = .spinning
+        spinner.controlSize = .regular
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinnerBackground.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinnerBackground.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spinnerBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+            spinnerBackground.widthAnchor.constraint(equalToConstant: 64),
+            spinnerBackground.heightAnchor.constraint(equalToConstant: 64),
+            spinner.centerXAnchor.constraint(equalTo: spinnerBackground.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: spinnerBackground.centerYAnchor),
+        ])
+    }
+
+    var isSpinning: Bool { !spinnerBackground.isHidden }
+
+    func setSpinning(_ spinning: Bool) {
+        guard spinning != isSpinning else { return }
+        spinnerBackground.isHidden = !spinning
+        if spinning { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
     }
 
     @available(*, unavailable)

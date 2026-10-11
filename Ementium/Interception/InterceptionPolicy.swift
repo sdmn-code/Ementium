@@ -1,5 +1,22 @@
+import AppKit
 import CoreGraphics
 import Foundation
+
+/// Что делать с клавишей, пока открыт просмотр в режиме «следовать за Finder».
+/// Finder за оверлеем активен, поэтому до него доходит только то, что мы сами отправим.
+nonisolated enum ViewerKeyAction: Equatable {
+    /// Шаг листания — стрелка уйдёт в Finder (после перевода под вид окна).
+    case step(ArrowKey)
+    case close
+    case quit
+    /// Системное сочетание, не уводящее от просмотра (скриншот, раскладка), — пропустить.
+    case pass
+    /// Системное сочетание, уводящее из Finder (⌘Tab, Spotlight, Mission Control), — пропустить
+    /// и закрыть просмотр: Finder больше не получает наши стрелки, а ввод в Spotlight не должен глотаться.
+    case passAndClose
+    /// Проглотить: иначе Finder за оверлеем невидимо переименовал бы, удалил или выделил всё.
+    case swallow
+}
 
 /// Решение «поглотить Пробел или пропустить в Finder». Чистая функция: никаких обращений к системе,
 /// поэтому её можно вызывать из callback перехвата и проверять тестами.
@@ -30,4 +47,92 @@ nonisolated enum InterceptionPolicy {
         else { return .pass }
         return .absorb(state.selection)
     }
+
+    /// Клавиша при открытом просмотре в режиме «следовать за Finder».
+    ///
+    /// Системные сочетания пропускаются строго по списку: всё остальное дойдёт до Finder за оверлеем,
+    /// а там есть опасное — ⌥⌘⌫ «Удалить немедленно», ⌥⇧⌘⌫ «Очистить Корзину», ⌃⌘N «Новая папка с выбранным».
+    /// Список — сочетания из настроек пользователя (`SystemShortcuts`) и несколько неназначаемых.
+    static func followingAction(
+        keyCode: UInt16, characters: String?, flags: CGEventFlags, isRepeat: Bool,
+        systemShortcuts: [SystemShortcut]
+    ) -> ViewerKeyAction {
+        let modifiers = flags.intersection(SystemShortcuts.modifierMask)
+        if let fixed = fixedSystemShortcut(keyCode: keyCode, modifiers: modifiers) {
+            return fixed
+        }
+        if let shortcut = systemShortcuts.first(where: { $0.keyCode == keyCode && $0.modifiers == modifiers }) {
+            return shortcut.action
+        }
+        // «Модификатор + Пробел» — почти всегда запускалка (Spotlight, Alfred, Raycast) или смена языка,
+        // назначенные сторонним приложением. Пропускаем и закрываем: просмотр закроется, и всё будет видно.
+        if keyCode == KeyCode.space, !modifiers.isEmpty {
+            return .passAndClose
+        }
+        if modifiers.isEmpty, let arrow = ArrowKey(rawValue: keyCode) {
+            return .step(arrow)
+        }
+        // F-клавиши — Mission Control, Launchpad, рабочий стол и т. п.
+        if modifiers.isEmpty, KeyCode.functionKeys.contains(keyCode) {
+            return .passAndClose
+        }
+        let nsModifiers = NSEvent.ModifierFlags(rawValue: UInt(modifiers.rawValue))
+        switch ViewerCommand(keyCode: keyCode, characters: characters, modifiers: nsModifiers) {
+        case .close?:
+            // Автоповтор Пробела, которым открыли просмотр, не должен его тут же закрыть.
+            return isRepeat ? .swallow : .close
+        case .quit?:
+            return .quit
+        default:
+            return .swallow
+        }
+    }
+
+    private enum KeyCode {
+        static let tab: UInt16 = 48
+        static let space: UInt16 = 49
+        static let grave: UInt16 = 50
+        static let escape: UInt16 = 53
+        static let q: UInt16 = 12
+        static let functionKeys: Set<UInt16> = [
+            122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111,  // F1–F12
+            105, 107, 113, 106, 64, 79, 80, 90,                      // F13–F20
+        ]
+    }
+
+    /// Сочетания, которых нет в настройках клавиатуры: переключатель приложений, переход между окнами,
+    /// принудительное завершение, блокировка экрана.
+    private static func fixedSystemShortcut(keyCode: UInt16, modifiers: CGEventFlags) -> ViewerKeyAction? {
+        let command: CGEventFlags = .maskCommand
+        let commandShift: CGEventFlags = [.maskCommand, .maskShift]
+        switch (keyCode, modifiers) {
+        case (KeyCode.tab, command), (KeyCode.tab, commandShift),
+             (KeyCode.grave, command), (KeyCode.grave, commandShift),
+             (KeyCode.escape, [.maskCommand, .maskAlternate]),
+             (KeyCode.q, [.maskControl, .maskCommand]):
+            return .passAndClose
+        default:
+            return nil
+        }
+    }
+}
+
+/// Клавиши, нажатие которых перехват проглотил: их автоповтор и отпускание тоже не должны дойти
+/// до приложения — иначе Finder получит «отпускание» без нажатия или повтор Пробела откроет Quick Look.
+nonisolated struct SwallowedKeys {
+    private var keys = Set<UInt16>()
+
+    mutating func swallow(_ keyCode: UInt16) { keys.insert(keyCode) }
+
+    /// Клавиша проглочена и ещё не отпущена (для её автоповтора).
+    func isHeld(_ keyCode: UInt16) -> Bool { keys.contains(keyCode) }
+
+    /// Новое (не автоповтор) нажатие: прежнее отпускание потерялось, забываем его.
+    mutating func pressed(_ keyCode: UInt16) { keys.remove(keyCode) }
+
+    /// Отпускание: `true` — его тоже нужно проглотить.
+    mutating func released(_ keyCode: UInt16) -> Bool { keys.remove(keyCode) != nil }
+
+    /// Система отключала tap — отпускания могли пройти мимо.
+    mutating func reset() { keys.removeAll() }
 }

@@ -1,15 +1,28 @@
 import AppKit
 import os
 
-/// Окно просмотра: принимает клавиатуру, но не активирует приложение (как Spotlight),
-/// поэтому активным остаётся то приложение, из которого открыли просмотр.
+/// Окно просмотра. Не активирует приложение (как Spotlight), поэтому активным остаётся то,
+/// из которого открыли просмотр. В режиме «следовать за Finder» не берёт и клавиатуру.
 final class ViewerPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    var acceptsKeyboard = true
+    override var canBecomeKey: Bool { acceptsKeyboard }
     override var canBecomeMain: Bool { false }
 }
 
 /// Полноэкранный просмотр поверх всех окон.
+///
+/// Два режима:
+/// - **следовать за Finder** — один файл, открытый Пробелом. Клавиатура остаётся у Finder, стрелки
+///   уходят в Finder через перехват, а просмотр показывает то, что Finder выделил (`followed`).
+///   Порядок листания — всегда порядок окна Finder.
+/// - **свой список** — несколько выделенных файлов или `open -a`: панель берёт клавиатуру и листает
+///   `ImageDirectory` сама.
 final class ViewerWindowController: NSObject, NSWindowDelegate {
+    private enum Mode {
+        case ownList
+        case following
+    }
+
     private enum State {
         case hidden
         case visible
@@ -21,16 +34,34 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private let viewerView = ViewerView(frame: .zero)
     private let interception: InterceptionState
     private var state = State.hidden
+    private var mode = Mode.ownList
     private var directory: ImageDirectory?
+    private var followedURL: URL?
     private var loadTask: Task<Void, Never>?
     private var directoryTask: Task<Void, Never>?
     /// Пока полный список строится, стрелки не теряются: копим шаги и применяем разом.
     private var isListPending = false
     private var pendingSteps = 0
     private var previousApp: NSRunningApplication?
+    /// Источники ожидания для индикатора: Finder ищет следующую картинку / картинка декодируется.
+    private var isNavigationBusy = false
+    private var isDecoding = false
+    private var spinnerDelay: Task<Void, Never>?
+    /// Индикатор появляется, только если ожидание затянулось, — иначе он мигал бы при обычном листании.
+    private static let spinnerDelayDuration = Duration.milliseconds(300)
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "viewer")
 
     private static let fadeDuration = 0.15
+
+    var isFollowing: Bool { mode == .following && state == .visible }
+
+    /// Просмотр вышел из режима «следовать» — закрылся или переключился на свой список.
+    /// Мост должен перестать листать Finder.
+    var onFollowingEnded: (() -> Void)?
+
+    private var currentURL: URL? {
+        mode == .following ? followedURL : directory?.current
+    }
 
     init(state interception: InterceptionState) {
         self.interception = interception
@@ -62,19 +93,67 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         )
     }
 
-    /// Открывает просмотр. Если он уже открыт — заменяет содержимое.
+    /// Открывает просмотр, который листается вслед за выделением Finder.
+    func showFollowing(_ url: URL) {
+        directoryTask?.cancel()
+        isListPending = false
+        pendingSteps = 0
+        directory = nil
+        mode = .following
+        followedURL = url
+        viewerView.clear()
+        present()
+        loadCurrent()
+    }
+
+    /// Finder выделил другую картинку.
+    func followed(_ url: URL) {
+        guard isFollowing, url != followedURL else { return }
+        followedURL = url
+        loadCurrent()
+    }
+
+    /// Мост сообщает, что Finder ищет следующую картинку (пропускает документы).
+    func setNavigationBusy(_ busy: Bool) {
+        isNavigationBusy = busy && isFollowing
+        updateSpinner()
+    }
+
+    private func updateSpinner() {
+        guard isNavigationBusy || isDecoding else {
+            spinnerDelay?.cancel()
+            spinnerDelay = nil
+            viewerView.setSpinning(false)
+            return
+        }
+        guard spinnerDelay == nil, !viewerView.isSpinning else { return }
+        spinnerDelay = Task {
+            try? await Task.sleep(for: Self.spinnerDelayDuration)
+            guard !Task.isCancelled else { return }
+            spinnerDelay = nil
+            if isNavigationBusy || isDecoding { viewerView.setSpinning(true) }
+        }
+    }
+
+    /// Закрывает просмотр в режиме «следовать за Finder» (Esc, Пробел или Finder перестал быть активным).
+    func closeFollowing() {
+        guard isFollowing else { return }
+        close(returnFocus: false)
+    }
+
+    /// Открывает просмотр со своим списком. Если он уже открыт — заменяет содержимое.
     ///
     /// Выделенная картинка показывается сразу, а список для листания строится в фоне:
-    /// каталог может быть большим или на сетевом диске, а список окна Finder читается сотнями AX-запросов.
-    ///
-    /// - Parameter finderViewItems: файлы из окна Finder в его порядке — для «Недавних», поиска и
-    ///   других виртуальных окон. Если не задан или текущего файла в окне нет — листается каталог файла.
-    func show(urls: [URL], finderViewItems: (@Sendable () async -> [URL])? = nil) {
+    /// каталог может быть большим или на сетевом диске.
+    func show(urls: [URL]) {
         guard let preview = ImageDirectory(preview: urls) else {
             log.error("Среди открытых файлов нет изображений")
             NSSound.beep()
             return
         }
+        if isFollowing { onFollowingEnded?() }
+        mode = .ownList
+        followedURL = nil
         directory = preview
         // Новый набор файлов: старая картинка не должна мелькать, пока декодируется новая.
         viewerView.clear()
@@ -85,17 +164,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         pendingSteps = 0
         directoryTask?.cancel()
         directoryTask = Task {
-            var full: ImageDirectory?
-            if let finderViewItems, urls.count == 1 {
-                let items = await finderViewItems()
-                full = await ImageDirectory.load(ordered: items, current: preview.current)
-                if full == nil {
-                    log.info("Файла нет в списке окна Finder (\(items.count) эл.), листаю каталог")
-                }
-            }
-            if full == nil {
-                full = await ImageDirectory.load(opening: urls)
-            }
+            let full = await ImageDirectory.load(opening: urls)
             // Пока строился список, просмотр могли закрыть или открыть другие файлы.
             guard !Task.isCancelled, directory == preview else { return }
             isListPending = false
@@ -127,10 +196,18 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         }
         // Из .closing продолжаем с текущей прозрачности, без мигания.
         state = .visible
-        // Пока просмотр открыт, Пробел должен доходить до него, а не перехватываться снова.
-        interception.update { $0.isViewerVisible = true }
-        panel.makeKey()
-        panel.makeFirstResponder(viewerView)
+        let following = mode == .following
+        // Пока просмотр открыт, Пробел должен закрывать его, а не открывать снова;
+        // в режиме «следовать» все нажатия разбирает перехват.
+        interception.update {
+            $0.isViewerVisible = true
+            $0.isFollowingFinder = following
+        }
+        panel.acceptsKeyboard = !following
+        if !following {
+            panel.makeKey()
+            panel.makeFirstResponder(viewerView)
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.fadeDuration
             panel.animator().alphaValue = 1
@@ -142,13 +219,21 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     ///   Ementium не активируется вовсе (Finder остаётся активным), и возвращать нечего.
     private func close(returnFocus: Bool) {
         guard state == .visible else { return }
+        if mode == .following { onFollowingEnded?() }
         state = .closing
-        interception.update { $0.isViewerVisible = false }
+        interception.update {
+            $0.isViewerVisible = false
+            $0.isFollowingFinder = false
+        }
         loadTask?.cancel()
         directoryTask?.cancel()
+        isNavigationBusy = false
+        isDecoding = false
+        updateSpinner()
         isListPending = false
         pendingSteps = 0
         directory = nil
+        followedURL = nil
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.fadeDuration
             panel.animator().alphaValue = 0
@@ -172,7 +257,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     // ⌘Tab, Spotlight, клик по уведомлению: клавиши уйдут в другое приложение,
     // и висящий поверх всего оверлей было бы нечем закрыть.
+    // В режиме «следовать» панель не бывает ключевой — там закрывает AppDelegate, когда Finder неактивен.
     func windowDidResignKey(_ notification: Notification) {
+        guard mode == .ownList else { return }
         close(returnFocus: false)
     }
 
@@ -190,21 +277,27 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func loadCurrent() {
-        guard let url = directory?.current else { return }
+        guard let url = currentURL else { return }
         let screen = panel.screen ?? NSScreen.main
         let scale = screen?.backingScaleFactor ?? 2
         let frame = screen?.frame.size ?? CGSize(width: 2560, height: 1600)
         let maxPixelSize = Int(max(frame.width, frame.height) * scale)
 
         loadTask?.cancel()
+        isDecoding = true
+        updateSpinner()
         loadTask = Task {
             do {
                 let loaded = try await ImageLoader.load(url, maxPixelSize: maxPixelSize)
                 // Пока декодировали, пользователь мог перелистнуть дальше.
-                guard !Task.isCancelled, directory?.current == url else { return }
+                guard !Task.isCancelled, currentURL == url else { return }
+                isDecoding = false
+                updateSpinner()
                 viewerView.show(loaded)
             } catch {
-                guard !Task.isCancelled, directory?.current == url else { return }
+                guard !Task.isCancelled, currentURL == url else { return }
+                isDecoding = false
+                updateSpinner()
                 log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private)")
                 viewerView.showError(fileName: url.lastPathComponent)
             }

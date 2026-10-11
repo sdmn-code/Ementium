@@ -12,9 +12,11 @@ nonisolated struct InterceptionSnapshot: Sendable, Equatable {
     var isTextFieldFocused = false
     var selection: [URL] = []
     var selectionHasImage = false
-    /// Выделен один файл, и окно Finder — не его папка, а «Недавние», поиск, тег или смарт-папка.
-    /// Тогда листать нужно то, что показано в окне, а не каталог файла.
-    var isVirtualLocation = false
+    /// Просмотр открыт в режиме «следовать за Finder»: клавиатура остаётся у Finder,
+    /// и все нажатия разбирает перехват (`InterceptionPolicy.followingAction`).
+    var isFollowingFinder = false
+    /// Системные сочетания пользователя (с учётом переназначенных) — их перехват пропускает.
+    var systemShortcuts: [SystemShortcut] = []
 }
 
 /// Общий снимок для трёх потоков: главного, `FinderBridge` и `KeyInterceptor`.

@@ -108,28 +108,6 @@ final class ImageDirectoryTests {
         }
     }
 
-    // «Недавние»: порядок окна (не по имени), не-изображения и дубли выкидываются.
-    @Test func orderedListKeepsFinderOrder() throws {
-        let window = ["photo.HEIC", "doc.pdf", "img-10.png", "img-1.jpg", "img-10.png", "notes.txt", "img-2.png"].map(url)
-        let directory = try #require(ImageDirectory(ordered: window, current: url("img-1.jpg")))
-        #expect(names(directory) == ["photo.HEIC", "img-10.png", "img-1.jpg", "img-2.png"])
-        #expect(directory.index == 2)
-    }
-
-    @Test func orderedListWithoutCurrentFileIsNil() {
-        #expect(ImageDirectory(ordered: [url("img-1.jpg"), url("img-2.png")], current: url("photo.HEIC")) == nil)
-        #expect(ImageDirectory(ordered: [], current: url("photo.HEIC")) == nil)
-    }
-
-    // Список окна может прийти с путями через /private/var — текущий файл всё равно находится,
-    // и остаётся тем URL, который передали.
-    @Test func orderedListFindsCurrentThroughResolvedPaths() throws {
-        let window = ["img-1.jpg", "img-2.png"].map { url($0).resolvingSymlinksInPath() }
-        let directory = try #require(ImageDirectory(ordered: window, current: url("img-2.png")))
-        #expect(directory.current == url("img-2.png"))
-        #expect(directory.index == 1)
-    }
-
     @Test func moveBySeveralStepsStopsAtEdges() throws {
         var directory = try #require(ImageDirectory(opening: [url("img-2.png")]))  // 1 из 0…3
         let forward = directory.move(by: 10)

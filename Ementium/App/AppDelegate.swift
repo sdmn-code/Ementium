@@ -8,10 +8,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionsManager()
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "app")
     private lazy var viewer = ViewerWindowController(state: state)
-    private lazy var bridge = FinderBridge(state: state)
-    private lazy var interceptor = KeyInterceptor(state: state) { [weak self] urls, fromFinderView in
-        Task { @MainActor in self?.openFromFinder(urls, fromFinderView: fromFinderView) }
-    }
+    private lazy var bridge = FinderBridge(
+        state: state,
+        onShow: { [weak self] url in
+            // Главная очередь сохраняет порядок: при быстром листании старая картинка не покажется после новой.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.viewer.followed(url) }
+            }
+        },
+        onBusy: { [weak self] busy in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.viewer.setNavigationBusy(busy) }
+            }
+        }
+    )
+    private lazy var interceptor = KeyInterceptor(
+        state: state,
+        onAbsorb: { [weak self] urls in
+            Task { @MainActor in self?.openFromFinder(urls) }
+        },
+        onViewerKey: { [weak self, bridge] action in
+            // Шаг — сразу в мост, без захода на главный поток: каждая миллисекунда видна при листании.
+            if case .step(let key) = action {
+                bridge.step(key)
+            } else {
+                Task { @MainActor in self?.handleViewerKey(action) }
+            }
+        }
+    )
     private var statusMenu: StatusMenuController?
     private var retryTask: Task<Void, Never>?
 
@@ -33,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.onOpenAccessibilitySettings = { [weak self] in self?.permissions.openAccessibilitySettings() }
         statusMenu = menu
 
+        viewer.onFollowingEnded = { [weak self] in self?.bridge.stopFollowing() }
         observeWorkspace()
         permissions.waitForAccessibility { [weak self] in self?.startInterception() }
     }
@@ -44,9 +69,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewer.show(urls: urls)
     }
 
-    private func openFromFinder(_ urls: [URL], fromFinderView: Bool) {
-        let bridge = self.bridge
-        viewer.show(urls: urls, finderViewItems: fromFinderView ? { @Sendable in await bridge.viewItems() } : nil)
+    /// Пробел в Finder. Один файл — листаем вслед за выделением Finder (его порядок, его окно);
+    /// несколько — по своему списку из выделенных, как Quick Look.
+    private func openFromFinder(_ urls: [URL]) {
+        if urls.count == 1, let url = urls.first {
+            // Пока Пробел шёл до главного потока, пользователь мог уйти из Finder (⌘Tab) — тогда режим
+            // «следовать» глотал бы клавиши в другом приложении.
+            guard state.snapshot.isFinderFrontmost else { return }
+            // Сочетания могли переназначить в Системных настройках — перечитываем при каждом открытии.
+            let shortcuts = SystemShortcuts.load()
+            state.update { $0.systemShortcuts = shortcuts }
+            viewer.showFollowing(url)
+            if viewer.isFollowing {
+                bridge.startFollowing(at: url)
+            }
+        } else {
+            viewer.show(urls: urls)
+        }
+    }
+
+    private func handleViewerKey(_ action: ViewerKeyAction) {
+        switch action {
+        case .close:
+            endFollowing()
+        case .quit:
+            NSApp.terminate(nil)
+        case .step, .pass, .passAndClose, .swallow:
+            break
+        }
+    }
+
+    /// Закрыть просмотр в режиме «следовать»; мост остановит `viewer.onFollowingEnded`.
+    private func endFollowing() {
+        viewer.closeFollowing()
     }
 
     // MARK: - Перехват
@@ -85,13 +140,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                            name: NSWorkspace.didActivateApplicationNotification, object: nil)
         center.addObserver(self, selector: #selector(finderDidRestart(_:)),
                            name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        center.addObserver(self, selector: #selector(finderDidTerminate(_:)),
+                           name: NSWorkspace.didTerminateApplicationNotification, object: nil)
     }
 
     @objc private func applicationDidActivate(_ notification: Notification) {
         let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
         let isFinder = app?.bundleIdentifier == FinderBridge.finderBundleID
         state.update { $0.isFinderFrontmost = isFinder }
-        if isFinder { bridge.refreshSoon() }
+        if isFinder {
+            bridge.refreshSoon()
+        } else if viewer.isFollowing {
+            // ⌘Tab, Spotlight, клик по уведомлению: Finder больше не получает наши стрелки.
+            endFollowing()
+        }
+    }
+
+    /// Finder упал или завершился во время просмотра — листать больше нечем.
+    @objc private func finderDidTerminate(_ notification: Notification) {
+        let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        guard app?.bundleIdentifier == FinderBridge.finderBundleID else { return }
+        state.update { $0.isFinderFrontmost = false }
+        endFollowing()
     }
 
     @objc private func finderDidRestart(_ notification: Notification) {
