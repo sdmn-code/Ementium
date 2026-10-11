@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние проекта
 
-Remote — GitHub `sdmn-code/Ementium`. Реализован v0.1: `Ementium.xcodeproj`, оверлей, навигация, открытие через `open -a`, тесты. Перехвата Пробела (`KeyInterceptor`, `FinderBridge`), кэша (`ImageCache`), настроек и разрешений **ещё нет** — в README они описаны как план с пометками версий. `Prototypes/FinderAXProbe` — одноразовый прототип, в приложение не переносится.
+Remote — GitHub `sdmn-code/Ementium`. Реализованы v0.1 (оверлей, навигация, `open -a`) и v0.2 (перехват Пробела в Finder, кэш Finder через AXObserver, разрешение, иконка в строке меню). Кэша изображений (`ImageCache`), настроек и автозапуска **ещё нет** — в README они описаны как план с пометками версий. `Prototypes/FinderAXProbe` — одноразовый прототип, в приложение не переносится.
 
 Перед ссылкой на любой тип из README проверяй, существует ли он. Меняешь структуру или поведение — обновляй README.
 
@@ -31,9 +31,13 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
 
 **Swift 6 и изоляция.** В app-target `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` и approachable concurrency: всё по умолчанию на главном акторе, а `nonisolated async` выполняется на акторе вызывающего. Чистая логика (`ImageDirectory`, `ViewerCommand`) помечена `nonisolated`, чтобы её можно было тестировать и звать откуда угодно. Фоновая работа — `@concurrent` (см. `ImageLoader.load`), иначе декодирование уйдёт на главный поток.
 
-**Запуск для проверки.** `open -a <путь к .app> файл`. Оверлей перекрывает **весь экран пользователя** поверх всех окон — предупреждай перед запуском и закрывай `pkill -x Ementium`. Наличие окна без скриншота: `CGWindowListCopyWindowInfo` по PID (bounds, layer, alpha). Логи — `/usr/bin/log show --predicate 'subsystem == "io.github.sdmn-code.Ementium"' --info`: в zsh голое `log` — встроенная команда оболочки.
+**Установка и запуск.** `scripts/install.sh` — единственный способ ставить приложение для проверки перехвата: собирает Release, кладёт одну копию в `~/Applications`, снимает регистрацию промежуточных сборок в LaunchServices (иначе «Открыть в программе» ведёт в DerivedData) и запускает. `--no-open` — без запуска. `build/` помечен `.metadata_never_index`: Spotlight иначе заново регистрирует найденные там `.app`. Разрешение «Универсальный доступ» привязано к подписи (Apple Development, стабильна) и переживает переустановку.
+
+**Запуск для проверки оверлея без перехвата.** `open -a <путь к .app> файл`. Оверлей перекрывает **весь экран пользователя** поверх всех окон — предупреждай перед запуском и закрывай `pkill -x Ementium`. Наличие окна без скриншота: `CGWindowListCopyWindowInfo` по PID (bounds, layer, alpha). Логи — `/usr/bin/log show --predicate 'subsystem == "io.github.sdmn-code.Ementium"' --info`: в zsh голое `log` — встроенная команда оболочки.
 
 ## Архитектура: ключевые ограничения
+
+**Три потока.** Главный: `AppDelegate`, просмотр, меню, разрешения. `FinderBridge` и `KeyInterceptor` — каждый на своём `RunLoopThread`, чтобы AX-запросы к занятому Finder (до сотен мс) не блокировали ни UI, ни event tap. Общаются только через `InterceptionState` (снимок под `OSAllocatedUnfairLock`). Решение о поглощении — чистая `InterceptionPolicy.decide`, покрыта тестами; при любом сомнении (снимок устарел, идёт дебаунс, фокус в тексте) — пропускать Пробел. Пока открыт просмотр, `isViewerVisible = true` и Пробел не перехватывается: Finder остаётся активным, а Пробел должен дойти до панели просмотра.
 
 Эти вещи определяют устройство кода и не выводятся из отдельных файлов.
 

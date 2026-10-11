@@ -98,6 +98,26 @@ final class ImageDirectoryTests {
         #expect(names(directory) == [".hidden.png"])
     }
 
+    @Test func previewIsTheFileThatTheFullListStartsFrom() async throws {
+        for files in [["img-2.png"], ["img-10.png", "doc.pdf", "img-1.jpg"], ["doc.pdf", "photo.HEIC"]] {
+            let urls = files.map(url)
+            let preview = try #require(ImageDirectory(preview: urls))
+            let full = try #require(await ImageDirectory.load(opening: urls))
+            #expect(preview.images.count == 1)
+            #expect(preview.current == full.current, "файлы: \(files)")
+        }
+    }
+
+    @Test func previewWithoutImagesIsNil() {
+        #expect(ImageDirectory(preview: [url("doc.pdf"), url("notes.txt")]) == nil)
+    }
+
+    @Test func backgroundLoadMatchesSynchronousInit() async throws {
+        let urls = [url("img-2.png")]
+        let loaded = await ImageDirectory.load(opening: urls)
+        #expect(loaded == ImageDirectory(opening: urls))
+    }
+
     @Test func sameFileThroughDifferentPathsIsCountedOnce() throws {
         let direct = url("img-1.jpg")
         let resolved = direct.resolvingSymlinksInPath()

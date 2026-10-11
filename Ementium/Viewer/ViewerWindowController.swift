@@ -19,15 +19,18 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private let panel: ViewerPanel
     private let viewerView = ViewerView(frame: .zero)
+    private let interception: InterceptionState
     private var state = State.hidden
     private var directory: ImageDirectory?
     private var loadTask: Task<Void, Never>?
+    private var directoryTask: Task<Void, Never>?
     private var previousApp: NSRunningApplication?
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "viewer")
 
     private static let fadeDuration = 0.15
 
-    override init() {
+    init(state interception: InterceptionState) {
+        self.interception = interception
         panel = ViewerPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         super.init()
 
@@ -57,17 +60,28 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Открывает просмотр. Если он уже открыт — заменяет содержимое.
+    ///
+    /// Выделенная картинка показывается сразу, а список для листания строится в фоне:
+    /// каталог может быть большим или на сетевом диске. Пока список не готов, стрелки ничего не делают.
     func show(urls: [URL]) {
-        guard let opened = ImageDirectory(opening: urls) else {
+        guard let preview = ImageDirectory(preview: urls) else {
             log.error("Среди открытых файлов нет изображений")
             NSSound.beep()
             return
         }
-        directory = opened
+        directory = preview
         // Новый набор файлов: старая картинка не должна мелькать, пока декодируется новая.
         viewerView.clear()
         present()
         loadCurrent()
+
+        directoryTask?.cancel()
+        directoryTask = Task {
+            guard let full = await ImageDirectory.load(opening: urls), !Task.isCancelled else { return }
+            // Пока строился список, просмотр могли закрыть или открыть другие файлы.
+            guard directory == preview else { return }
+            directory = full
+        }
     }
 
     private func present() {
@@ -79,6 +93,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         }
         // Из .closing продолжаем с текущей прозрачности, без мигания.
         state = .visible
+        // Пока просмотр открыт, Пробел должен доходить до него, а не перехватываться снова.
+        interception.update { $0.isViewerVisible = true }
         panel.makeKey()
         panel.makeFirstResponder(viewerView)
         NSAnimationContext.runAnimationGroup { context in
@@ -88,11 +104,14 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     /// - Parameter returnFocus: вернуть фокус приложению, из которого открыли просмотр.
-    ///   Не нужно, если пользователь сам ушёл в другое приложение.
+    ///   Не нужно, если пользователь сам ушёл в другое приложение. При открытии из перехвата
+    ///   Ementium не активируется вовсе (Finder остаётся активным), и возвращать нечего.
     private func close(returnFocus: Bool) {
         guard state == .visible else { return }
         state = .closing
+        interception.update { $0.isViewerVisible = false }
         loadTask?.cancel()
+        directoryTask?.cancel()
         directory = nil
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.fadeDuration

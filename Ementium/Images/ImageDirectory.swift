@@ -30,6 +30,9 @@ nonisolated struct ImageDirectory: Equatable {
             // Каталог мог не прочитаться или файл мог исчезнуть — тогда показываем хотя бы его.
             if let position = images.firstIndex(where: { $0.lastPathComponent == first.lastPathComponent }) {
                 index = position
+                // Перечисление каталога может вернуть путь в другом написании (/private/var вместо /var).
+                // Текущим оставляем переданный URL: по нему просмотр сверяет, что показывает нужный файл.
+                images[position] = first
             } else {
                 images = [first]
                 index = 0
@@ -39,6 +42,21 @@ nonisolated struct ImageDirectory: Equatable {
             images = Self.sorted(opened).filter { seen.insert(Self.fileKey($0)).inserted }
             index = 0
         }
+    }
+
+    /// Список из одного изображения, который строится без чтения каталога, — чтобы показать картинку сразу,
+    /// пока полный список собирается в фоне. Для нескольких файлов это первое по имени изображение,
+    /// то есть то же, с которого начнёт полный список.
+    init?(preview urls: [URL]) {
+        guard let first = Self.sorted(urls).first(where: Self.isImage) else { return nil }
+        images = [first]
+        index = 0
+    }
+
+    /// Строит полный список вне главного потока: каталог может быть большим или на сетевом диске.
+    @concurrent
+    static func load(opening urls: [URL]) async -> ImageDirectory? {
+        ImageDirectory(opening: urls)
     }
 
     /// Переходит к следующему изображению. На последнем ничего не делает и возвращает `false`.
