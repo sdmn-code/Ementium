@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import UniformTypeIdentifiers
 
 /// Декодированное изображение и размер, в котором его показывать.
 nonisolated struct LoadedImage: @unchecked Sendable {
@@ -27,8 +28,10 @@ nonisolated enum ImageLoader {
     /// Оригинал целиком в память не загружается: ImageIO сразу строит уменьшенную копию,
     /// поэтому большие фото и RAW не съедают память. Изображения меньше лимита
     /// декодируются в исходном размере.
+    /// - Parameter embeddedPreviewOnly: предпочесть встроенное в файл превью. Если превью нет, ImageIO
+    ///   всё равно декодирует оригинал (проверено тестом) — тогда результат просто полноразмерный.
     @concurrent
-    static func load(_ url: URL, maxPixelSize: Int) async throws -> LoadedImage {
+    static func load(_ url: URL, maxPixelSize: Int, embeddedPreviewOnly: Bool = false) async throws -> LoadedImage {
         // При быстром листании большинство загрузок отменяется — не начинаем и не доделываем лишнее.
         try Task.checkCancellation()
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
@@ -40,12 +43,15 @@ nonisolated enum ImageLoader {
         let longSide = max(pixelWidth, pixelHeight)
         try Task.checkCancellation()
 
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
+        var options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: longSide > 0 ? min(longSide, maxPixelSize) : maxPixelSize,
         ]
+        // Без флага «всегда из оригинала» ImageIO берёт встроенное превью, если оно есть.
+        if !embeddedPreviewOnly {
+            options[kCGImageSourceCreateThumbnailFromImageAlways] = true
+        }
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             throw ImageLoaderError.unreadable
         }
@@ -65,6 +71,18 @@ nonisolated enum ImageLoader {
         }
 
         return LoadedImage(image: image, pointSize: size, pixelSize: pixels)
+    }
+
+    /// Встроенное превью RAW-файла — чтобы показать снимок сразу, пока сам RAW декодируется в фоне
+    /// (0,4–0,6 с под экран для ARW, RW2, DNG; превью читается за ~10 мс — замеры `Prototypes/RawProbe`).
+    /// `nil` — не RAW или превью меньше `minLongSide` (крошечное превью хуже короткого ожидания).
+    @concurrent
+    static func loadRawPreview(_ url: URL, maxPixelSize: Int, minLongSide: Int = 1000) async -> LoadedImage? {
+        guard let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+              type.conforms(to: .rawImage),
+              let preview = try? await load(url, maxPixelSize: maxPixelSize, embeddedPreviewOnly: true),
+              preview.decodedLongSide >= minLongSide else { return nil }
+        return preview
     }
 
     /// Предел для декодирования в полном разрешении: не больше ~100 Мп (около 400 МБ в памяти).

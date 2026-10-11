@@ -114,6 +114,20 @@ final class ImageLoaderTests {
         #expect(loaded.pixelSize == CGSize(width: 100, height: 200))
     }
 
+    // Быстрое превью — только для RAW: у JPEG встроенные превью крошечные, а сами они декодируются быстро.
+    @Test func rawPreviewIsNotUsedForOrdinaryImages() async throws {
+        let url = try makeImage("ordinary.jpg", width: 3000, height: 2000)
+        #expect(await ImageLoader.loadRawPreview(url, maxPixelSize: 5000) == nil)
+    }
+
+    // Встроенного превью нет — ImageIO декодирует оригинал (на этом держится пропуск второго
+    // декодирования RAW без превью в ViewerWindowController).
+    @Test func embeddedPreviewFallsBackToTheOriginal() async throws {
+        let url = try makeImage("no-preview.png", width: 2000, height: 1000, type: .png)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 5000, embeddedPreviewOnly: true)
+        #expect(loaded.decodedLongSide == 2000)
+    }
+
     // Предел полного разрешения — ~100 Мп: 24 Мп целиком, 200 Мп уменьшаются в √2 раз по стороне.
     @Test func fullResolutionLimit() {
         #expect(ImageLoader.fullResolutionLimit(for: CGSize(width: 6000, height: 4000)) == 6000)

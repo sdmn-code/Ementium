@@ -345,23 +345,47 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         isDecoding = true
         updateSpinner()
         loadTask = Task {
+            let keepScale = UserDefaults.standard.bool(forKey: Self.keepZoomWhenBrowsingKey)
+            // RAW: сначала встроенное превью (~10 мс), сам RAW под экран (0,4–0,6 с) — следом, подменой.
+            var showsPreview = false
+            if let preview = await ImageLoader.loadRawPreview(url, maxPixelSize: maxPixelSize) {
+                guard !Task.isCancelled, currentURL == url else { return }
+                isDecoding = false
+                updateSpinner()
+                self.loaded = preview
+                viewerView.show(preview, keepScale: keepScale)
+                showsPreview = true
+                // Превью уже не меньше нужного под экран (полноразмерное превью Nikon или RAW без превью,
+                // который ImageIO декодировал сразу) — второе декодирование ничего не добавит.
+                if preview.decodedLongSide >= min(preview.originalLongSide, maxPixelSize) { return }
+            }
             do {
                 let loaded = try await ImageLoader.load(url, maxPixelSize: maxPixelSize)
                 // Пока декодировали, пользователь мог перелистнуть дальше.
                 guard !Task.isCancelled, currentURL == url else { return }
                 isDecoding = false
                 updateSpinner()
+                // Показанное не хуже нового — оставляем: пока смотрели превью, увеличение могло подгрузить
+                // оригинал, а у Nikon встроенное превью полноразмерное.
+                if showsPreview, let current = self.loaded, current.decodedLongSide >= loaded.decodedLongSide {
+                    return
+                }
                 self.loaded = loaded
-                let keepScale = UserDefaults.standard.bool(forKey: Self.keepZoomWhenBrowsingKey)
-                viewerView.show(loaded, keepScale: keepScale)
-                // Масштаб сохранился с прошлой картинки — ей тоже может понадобиться больше деталей.
-                if keepScale, let zoom = viewerView.zoom { loadDetailIfNeeded(for: zoom) }
+                if showsPreview {
+                    viewerView.upgrade(loaded.image)
+                } else {
+                    viewerView.show(loaded, keepScale: keepScale)
+                }
+                // Масштаб сохранился с прошлой картинки или увеличили на превью — может понадобиться больше деталей.
+                if let zoom = viewerView.zoom, keepScale || showsPreview { loadDetailIfNeeded(for: zoom) }
             } catch {
                 guard !Task.isCancelled, currentURL == url else { return }
                 isDecoding = false
                 updateSpinner()
-                self.loaded = nil
                 log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private)")
+                // Превью уже на экране — лучше оно, чем сообщение об ошибке.
+                guard !showsPreview else { return }
+                self.loaded = nil
                 viewerView.showError(fileName: url.lastPathComponent)
             }
         }
