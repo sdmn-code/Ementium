@@ -9,8 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "app")
     private lazy var viewer = ViewerWindowController(state: state)
     private lazy var bridge = FinderBridge(state: state)
-    private lazy var interceptor = KeyInterceptor(state: state) { [weak self] urls in
-        Task { @MainActor in self?.viewer.show(urls: urls) }
+    private lazy var interceptor = KeyInterceptor(state: state) { [weak self] urls, fromFinderView in
+        Task { @MainActor in self?.openFromFinder(urls, fromFinderView: fromFinderView) }
     }
     private var statusMenu: StatusMenuController?
     private var retryTask: Task<Void, Never>?
@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         log.info("Открыть \(urls.count) файл(ов): \(urls.map(\.lastPathComponent), privacy: .private)")
         viewer.show(urls: urls)
+    }
+
+    private func openFromFinder(_ urls: [URL], fromFinderView: Bool) {
+        let bridge = self.bridge
+        viewer.show(urls: urls, finderViewItems: fromFinderView ? { @Sendable in await bridge.viewItems() } : nil)
     }
 
     // MARK: - Перехват

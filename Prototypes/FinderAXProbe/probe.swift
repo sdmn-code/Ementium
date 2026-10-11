@@ -259,6 +259,101 @@ func registerSelectionNotifications(on el: AXUIElement) {
     log("   подписка на контейнер \(roleKey(el)): " + results.joined(separator: ", "))
 }
 
+// MARK: - Режим view: что лежит во всём окне Finder
+
+var dumpedWindows = Set<String>()
+
+/// Невидимые символы (например, U+2068/2069 вокруг имени в заголовке) показываем явно.
+func visible(_ s: String) -> String {
+    s.unicodeScalars.map { $0.properties.generalCategory == .format ? String(format: "\\u{%04X}", $0.value) : String($0) }.joined()
+}
+
+/// Все элементы вида: строки списка или элементы коллекции (у значков и галереи они лежат в секциях).
+func viewItems(_ container: AXUIElement) -> ([AXUIElement], String) {
+    if let rows = elements(attr(container, kAXRowsAttribute)), !rows.isEmpty { return (rows, "AXRows") }
+    var result: [AXUIElement] = []
+    var sections = 0
+    for child in elements(attr(container, kAXChildrenAttribute)) ?? [] {
+        if role(child) == kAXListRole, let inner = elements(attr(child, kAXChildrenAttribute)) {
+            sections += 1
+            result += inner
+        } else {
+            result.append(child)
+        }
+    }
+    return (result, sections > 0 ? "AXChildren, секций: \(sections)" : "AXChildren")
+}
+
+func describeView(container: AXUIElement, window: AXUIElement?, selected: [AXUIElement]) {
+    if let window {
+        let title = str(window, kAXTitleAttribute) ?? "—"
+        log("   ▦ окно: «\(visible(title))»")
+        if let proxy = element(attr(window, "AXProxy")) {
+            recording = false
+            var names: CFArray?
+            AXUIElementCopyAttributeNames(proxy, &names)
+            let parts = ((names as? [String]) ?? []).map { "\($0)=\(short(attr(proxy, $0)))" }
+            log("   ▦ AXProxy: " + parts.joined(separator: "; "))
+            recording = true
+        } else {
+            log("   ▦ AXProxy: нет")
+        }
+        if !dumpedWindows.contains(title) {
+            dumpedWindows.insert(title)
+            recording = false
+            var names: CFArray?
+            AXUIElementCopyAttributeNames(window, &names)
+            log("   ▦ атрибуты окна:")
+            for n in (names as? [String]) ?? [] { log("       \(n) = \(short(attr(window, n)))") }
+            recording = true
+        }
+    }
+    let counts = [kAXRowsAttribute, kAXVisibleRowsAttribute, kAXChildrenAttribute, kAXVisibleChildrenAttribute]
+        .map { name in "\(name)=\(elements(attr(container, name)).map { String($0.count) } ?? "—")" }
+        .joined(separator: " ")
+    let rowCount = (attr(container, "AXRowCount") as? NSNumber)?.stringValue ?? "—"
+    log("   ▦ вид: \(roleKey(container)) id=\(str(container, kAXIdentifierAttribute) ?? "—") desc=\(str(container, kAXDescriptionAttribute) ?? "—"); \(counts) AXRowCount=\(rowCount)")
+
+    let t0 = now()
+    let (items, how) = viewItems(container)
+    var urls: [URL?] = []
+    var nested = 0
+    for item in items {
+        urls.append(findURL(item, role(item), 2)?.0)
+        if let level = attr(item, "AXDisclosureLevel") as? Int, level > 0 { nested += 1 }
+    }
+    let elapsed = ms(since: t0)
+    // То же перечисление без служебных запросов роли — так его делало бы приложение.
+    let t1 = now()
+    var fastCount = 0
+    func fastURL(_ el: AXUIElement, _ depth: Int) -> URL? {
+        var value: AnyObject?
+        if AXUIElementCopyAttributeValue(el, kAXURLAttribute as CFString, &value) == .success, let u = value as? URL { return u }
+        guard depth > 0 else { return nil }
+        var kids: AnyObject?
+        guard AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &kids) == .success,
+              let children = kids as? [AXUIElement] else { return nil }
+        for child in children { if let u = fastURL(child, depth - 1) { return u } }
+        return nil
+    }
+    for item in items where fastURL(item, 2) != nil { fastCount += 1 }
+    log(String(format: "   ▦ быстрое перечисление: %d путей за %.1f мс", fastCount, ms(since: t1)))
+    let found = urls.compactMap { $0 }
+    var folders: [String: Int] = [:]
+    for u in found { folders[u.deletingLastPathComponent().path, default: 0] += 1 }
+    log(String(format: "   ▦ элементов: %d (%@), с путём: %d, разных папок: %d, вложенных строк: %d, перечисление %.1f мс",
+               items.count, how, found.count, folders.count, nested, elapsed))
+    let names = found.map(\.lastPathComponent)
+    log("   ▦ первые: \(names.prefix(5).joined(separator: " | "))")
+    if names.count > 5 { log("   ▦ последние: \(names.suffix(3).joined(separator: " | "))") }
+    for (folder, n) in folders.sorted(by: { $0.value > $1.value }).prefix(3) {
+        log("   ▦ папка (\(n)): \(folder)")
+    }
+    if let first = selected.first, let index = items.firstIndex(where: { CFEqual($0, first) }) {
+        log("   ▦ выделенный элемент на позиции \(index + 1) из \(items.count)")
+    }
+}
+
 func snapshot(reason: String) -> Snapshot {
     let t0 = now()
     guard let focused = element(attr(app, kAXFocusedUIElementAttribute)) else {
@@ -307,6 +402,9 @@ func snapshot(reason: String) -> Snapshot {
         registerSelectionNotifications(on: container)
     }
     if let first = found?.2.first { dumpOnce(first, label: "элемента выделения") }
+    if mode == "view", let target = container ?? Optional(focused) {
+        describeView(container: target, window: window, selected: found?.2 ?? [])
+    }
     return s
 }
 
@@ -643,8 +741,10 @@ if mode == "gen" {
     exit(0)
 }
 
-guard mode == "watch" || mode == "auto" else {
-    print("Режим: watch | auto | gen")
+if mode == "view" { compareWithAppleEvents = false }
+
+guard mode == "watch" || mode == "auto" || mode == "view" else {
+    print("Режим: watch | auto | view | gen")
     exit(2)
 }
 
@@ -675,6 +775,14 @@ if mode == "auto" {
     buildAutoScenario()
     log("Автосценарий: \(steps.count) шагов. Не трогай мышь и клавиатуру, пока он идёт.")
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { runStep(0) }
+} else if mode == "view" {
+    log("""
+    Режим view: на каждый клик — заголовок окна, все элементы вида, их папки и порядок.
+    Пройди: обычная папка (значки, список, колонки, галерея), большая папка (500+ файлов) в значках,
+    «Недавние», результаты поиска (⌘F), папка со раскрытой вложенной папкой в списке.
+    В каждом месте кликни по одной картинке. Ctrl+C — итог.
+    """)
+    _ = snapshot(reason: "начальное состояние")
 } else {
     log("""
     Кликай в Finder — каждое изменение попадёт в лог. Что проверить:

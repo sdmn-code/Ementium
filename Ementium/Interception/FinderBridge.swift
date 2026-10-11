@@ -19,6 +19,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private var observer: AXObserver?
     private var finderApp: AXUIElement?
     private var debounce: Timer?
+    /// Элемент вида с выделением (список, коллекция, колонка) — из него берётся список виртуального окна.
+    private var viewElement: AXUIElement?
 
     /// После последнего уведомления ждём, пока выделение перестанет меняться (зажатая стрелка).
     private static let debounceInterval = 0.05
@@ -47,6 +49,15 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     func refreshSoon() {
         state.update { $0.isFinderStateStale = true }
         thread.perform { self.scheduleRefresh() }
+    }
+
+    /// Файлы, показанные в текущем виде Finder, в порядке окна. В «списке» и «колонках» — все,
+    /// в «значках» и «галерее» — только подгруженные рядом с экраном (Finder создаёт AX-элементы лениво).
+    /// Это сотни AX-запросов (~0,9 мс на элемент), поэтому только по запросу и на потоке моста.
+    func viewItems() async -> [URL] {
+        await withCheckedContinuation { continuation in
+            thread.perform { continuation.resume(returning: self.enumerateView()) }
+        }
     }
 
     // MARK: - Поток моста
@@ -94,6 +105,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         }
         observer = nil
         finderApp = nil
+        viewElement = nil
         state.update { $0.isFinderStateStale = true }
     }
 
@@ -111,27 +123,56 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         guard let finderApp else { return }
         guard let focused = element(attribute(finderApp, kAXFocusedUIElementAttribute)) else {
             // Нет фокуса (нет окон) — выделения тоже нет.
-            publish(isTextField: false, selection: [])
+            viewElement = nil
+            publish(isTextField: false, selection: [], isVirtual: false)
             return
         }
         if isEditableText(focused) {
-            publish(isTextField: true, selection: [])
+            publish(isTextField: true, selection: [], isVirtual: false)
             return
         }
         let items = elements(attribute(focused, kAXSelectedRowsAttribute))
             ?? elements(attribute(focused, kAXSelectedChildrenAttribute))
             ?? []
-        publish(isTextField: false, selection: items.compactMap { findURL($0, depth: 2) })
+        let selection = items.compactMap { findURL($0, depth: 2) }
+        viewElement = focused
+        publish(isTextField: false, selection: selection, isVirtual: isVirtualWindow(of: focused, selection: selection))
     }
 
-    private func publish(isTextField: Bool, selection: [URL]) {
+    /// Виртуальность важна только для одного выделенного файла: несколько файлов листаются сами по себе.
+    private func isVirtualWindow(of view: AXUIElement, selection: [URL]) -> Bool {
+        guard selection.count == 1,
+              let window = element(attribute(view, kAXWindowAttribute)),
+              let title = attribute(window, kAXTitleAttribute) as? String else { return false }
+        let folder = selection[0].deletingLastPathComponent().path
+        return !FinderLocation.isFolderWindow(title: title, folderName: FileManager.default.displayName(atPath: folder))
+    }
+
+    private func publish(isTextField: Bool, selection: [URL], isVirtual: Bool) {
         let hasImage = selection.contains(where: ImageDirectory.isImage)
         state.update {
             $0.isTextFieldFocused = isTextField
             $0.selection = selection
             $0.selectionHasImage = hasImage
+            $0.isVirtualLocation = isVirtual
             $0.isFinderStateStale = false
         }
+    }
+
+    private func enumerateView() -> [URL] {
+        guard let viewElement else { return [] }
+        let items: [AXUIElement]
+        if let rows = elements(attribute(viewElement, kAXRowsAttribute)) {
+            items = rows
+        } else {
+            // Значки и галерея: элементы лежат внутри секций (AXList); колонка — сразу дети.
+            items = (elements(attribute(viewElement, kAXChildrenAttribute)) ?? []).flatMap { child in
+                attribute(child, kAXRoleAttribute) as? String == kAXListRole
+                    ? elements(attribute(child, kAXChildrenAttribute)) ?? []
+                    : [child]
+            }
+        }
+        return items.compactMap { findURL($0, depth: 2) }
     }
 
     // MARK: - AX

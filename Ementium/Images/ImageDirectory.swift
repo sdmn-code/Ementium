@@ -53,10 +53,29 @@ nonisolated struct ImageDirectory: Equatable {
         index = 0
     }
 
+    /// Список в заданном порядке — как файлы показаны в окне Finder («Недавние», поиск).
+    /// Только изображения, без дублей. `nil`, если текущего файла в списке нет.
+    init?(ordered urls: [URL], current: URL) {
+        var seen = Set<String>()
+        var images = urls.filter { seen.insert(Self.fileKey($0)).inserted && Self.isImage($0) }
+        let currentKey = Self.fileKey(current)
+        guard let position = images.firstIndex(where: { Self.fileKey($0) == currentKey }) else { return nil }
+        // Текущим оставляем переданный URL: по нему просмотр сверяет, что показывает нужный файл.
+        images[position] = current
+        self.images = images
+        index = position
+    }
+
     /// Строит полный список вне главного потока: каталог может быть большим или на сетевом диске.
     @concurrent
     static func load(opening urls: [URL]) async -> ImageDirectory? {
         ImageDirectory(opening: urls)
+    }
+
+    /// То же для списка из окна Finder: сотни файлов, у каждого читается тип.
+    @concurrent
+    static func load(ordered urls: [URL], current: URL) async -> ImageDirectory? {
+        ImageDirectory(ordered: urls, current: current)
     }
 
     /// Переходит к следующему изображению. На последнем ничего не делает и возвращает `false`.
@@ -64,6 +83,16 @@ nonisolated struct ImageDirectory: Equatable {
     mutating func moveNext() -> Bool {
         guard hasNext else { return false }
         index += 1
+        return true
+    }
+
+    /// Сдвигается на `steps` изображений (отрицательное — назад), упираясь в края.
+    /// Возвращает `false`, если позиция не изменилась.
+    @discardableResult
+    mutating func move(by steps: Int) -> Bool {
+        let target = min(max(index + steps, 0), images.count - 1)
+        guard target != index else { return false }
+        index = target
         return true
     }
 

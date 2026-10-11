@@ -9,7 +9,8 @@ import os
 /// и чистое решение `InterceptionPolicy`, без единого обращения к Finder.
 nonisolated final class KeyInterceptor: @unchecked Sendable {
     private let state: InterceptionState
-    private let onAbsorb: @Sendable ([URL]) -> Void
+    /// Файлы для просмотра и признак того, что листать нужно по окну Finder, а не по каталогу.
+    private let onAbsorb: @Sendable (_ urls: [URL], _ fromFinderView: Bool) -> Void
     private let thread = RunLoopThread(name: "Ementium.KeyInterceptor")
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "interceptor")
 
@@ -19,7 +20,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     /// дойти до Finder, иначе тот откроет Quick Look поверх просмотра.
     private var isSwallowingSpace = false
 
-    init(state: InterceptionState, onAbsorb: @escaping @Sendable ([URL]) -> Void) {
+    init(state: InterceptionState, onAbsorb: @escaping @Sendable (_ urls: [URL], _ fromFinderView: Bool) -> Void) {
         self.state = state
         self.onAbsorb = onAbsorb
     }
@@ -76,10 +77,11 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
                 if isRepeat { return nil }
                 isSwallowingSpace = false  // отпускание потерялось — это новое нажатие
             }
-            switch InterceptionPolicy.decide(keyCode: keyCode, flags: event.flags, isRepeat: isRepeat, state: state.snapshot) {
+            let snapshot = state.snapshot
+            switch InterceptionPolicy.decide(keyCode: keyCode, flags: event.flags, isRepeat: isRepeat, state: snapshot) {
             case .absorb(let urls):
                 isSwallowingSpace = true
-                onAbsorb(urls)
+                onAbsorb(urls, snapshot.isVirtualLocation)
                 return nil
             case .pass:
                 return Unmanaged.passUnretained(event)
