@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние проекта
 
-Remote — GitHub `sdmn-code/Ementium`. Реализованы v0.1 (оверлей, навигация, `open -a`), v0.2 (перехват Пробела в Finder, кэш Finder через AXObserver, разрешение, иконка в строке меню), v0.2.2 (листание вслед за выделением Finder), v0.3 (масштаб, жесты трекпада, RAW), v0.4 (окно настроек, автозапуск, первый запуск без разрешения) v0.5 (предзагрузка `ImageCache`, SVG, iCloud, RAW через `CIRAWFilter`, память масштаба каждой картинки, сведения о снимке по `⌥`) v0.6 (анимация, удаление в Корзину через Finder); v1.0 в работе — декодирование уже в XPC-сервисе. Мультимониторности и XPC-сервиса декодирования **ещё нет** — в README они описаны как план.
+Remote — GitHub `sdmn-code/Ementium`. Реализованы v0.1 (оверлей, навигация, `open -a`), v0.2 (перехват Пробела в Finder, кэш Finder через AXObserver, разрешение, иконка в строке меню), v0.2.2 (листание вслед за выделением Finder), v0.3 (масштаб, жесты трекпада, RAW), v0.4 (окно настроек, автозапуск, первый запуск без разрешения) v0.5 (предзагрузка `ImageCache`, SVG, iCloud, RAW через `CIRAWFilter`, память масштаба каждой картинки, сведения о снимке по `⌥`) v0.6 (анимация, удаление в Корзину через Finder); v1.0 (декодирование в XPC-сервисе, английский интерфейс, иконка, лицензия MIT, релиз DMG — `scripts/release.sh`). Мультимониторности и XPC-сервиса декодирования **ещё нет** — в README они описаны как план.
 
 Перед ссылкой на любой тип из README проверяй, существует ли он. Меняешь структуру или поведение — обновляй README.
 
@@ -29,7 +29,7 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
 
 Песочница и hardened runtime — build settings (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES`), файла `.entitlements` нет. `Info.plist` — частичный (только `CFBundleDocumentTypes`), остальное генерируется из `INFOPLIST_KEY_*`; в синхронизируемой папке он исключён из ресурсов через exception set.
 
-Подпись — Apple Development, Personal Team `JW5WYVU2JQ` (бесплатный аккаунт). Developer ID и нотаризации для v1.0 пока нет.
+Подпись — Apple Development, Personal Team `JW5WYVU2JQ` (бесплатный аккаунт); ею же подписан и релиз (в подписи видна почта Apple ID — так решено). Developer ID и нотаризации пока нет. **В Release `CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO`** у приложения и сервиса — иначе Xcode добавляет `get-task-allow` (отладчик может подключиться к процессу с «Универсальным доступом»). Из-за этого песочница сервиса задана явно файлом `EmentiumDecoder/EmentiumDecoder.entitlements` (`ENABLE_APP_SANDBOX` работает через ту же подстановку). `scripts/release.sh` проверяет всё это и собирает DMG.
 
 **Swift 6 и изоляция.** В app-target `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` и approachable concurrency: всё по умолчанию на главном акторе, а `nonisolated async` выполняется на акторе вызывающего. Чистая логика (`ImageDirectory`, `ViewerCommand`) помечена `nonisolated`, чтобы её можно было тестировать и звать откуда угодно. Фоновая работа — `@concurrent` (см. `ImageLoader.load`), иначе декодирование уйдёт на главный поток.
 

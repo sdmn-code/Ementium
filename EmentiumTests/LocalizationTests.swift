@@ -38,7 +38,10 @@ struct LocalizationTests {
             let text = try String(contentsOf: file, encoding: .utf8)
             for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let range = Range(match.range(at: 1), in: text) else { continue }
-                let key = String(text[range]).replacingOccurrences(of: "\\'", with: "'")
+                // Подстановки `\(...)` в каталоге — `%@`.
+                let key = String(text[range]).replacingOccurrences(
+                    of: #"\\\([^)]*\)"#, with: "%@", options: .regularExpression
+                )
                 found += 1
                 if strings[key] == nil { Issue.record("\(file.lastPathComponent): «\(key)» нет в каталоге") }
             }

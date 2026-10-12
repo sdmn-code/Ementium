@@ -1,6 +1,16 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "About": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "О программе"
+          }
+        }
+      }
+    },
     "Accessibility access needed": {
       "localizations": {
         "ru": {
@@ -431,6 +441,16 @@
         }
       }
     },
+    "Source code on GitHub": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Исходный код на GitHub"
+          }
+        }
+      }
+    },
     "Space closes the viewer": {
       "localizations": {
         "ru": {
@@ -511,6 +531,16 @@
         }
       }
     },
+    "Version %@ (%@)": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Версия %1$@ (%2$@)"
+          }
+        }
+      }
+    },
     "Viewer": {
       "localizations": {
         "ru": {
@@ -537,6 +567,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "macOS ждёт подтверждения в «Объектах входа»"
+          }
+        }
+      }
+    },
+    "© 2026 Alexander Key. MIT License.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "© 2026 Alexander Key. Лицензия MIT."
           }
         }
       }

@@ -28,6 +28,7 @@ struct SettingsView: View {
             }
             generalSection
             viewerSection
+            aboutSection
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -79,6 +80,25 @@ struct SettingsView: View {
                 Button("Quit Ementium") { NSApp.terminate(nil) }
             }
         }
+    }
+
+    // MARK: - О программе
+
+    private var aboutSection: some View {
+        Section("About") {
+            LabeledContent("Ementium", value: Self.version)
+            Link("Source code on GitHub", destination: URL(string: "https://github.com/sdmn-code/Ementium")!)
+            Text("© 2026 Alexander Key. MIT License.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// «1.0 (1)» — версия и номер сборки из Info.plist.
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return String(localized: "Version \(short) (\(build))")
     }
 
     // MARK: - Просмотр
