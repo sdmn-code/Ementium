@@ -365,7 +365,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             onOpenSettings?()
         case .trash:
             // Удаление — через Finder, а здесь Finder не знает, что показано.
-            if preferences.trashEnabled { viewerView.showMessage("Удаление — когда картинка открыта Пробелом в Finder") }
+            if preferences.trashEnabled { viewerView.showMessage(String(localized: "Deleting works when the image was opened with Space in Finder")) }
         case .undo:
             break
         }

@@ -22,7 +22,7 @@ struct SettingsView: View {
                 permissionSection
             } else if model.justGranted {
                 Section {
-                    Label("Готово: выделите картинку в Finder и нажмите Пробел.", systemImage: "checkmark.circle.fill")
+                    Label("Done: select an image in Finder and press Space.", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 }
             }
@@ -36,23 +36,19 @@ struct SettingsView: View {
     // MARK: - Разрешение
 
     private var permissionSection: some View {
-        Section("Разрешение") {
+        Section("Permission") {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Нужен «Универсальный доступ»", systemImage: "hand.raised.fill")
+                Label("Accessibility access needed", systemImage: "hand.raised.fill")
                     .font(.headline)
-                Text("""
-                Чтобы открывать картинки по Пробелу вместо Quick Look, Ementium перехватывает Пробел в Finder \
-                и читает, какой файл выделен. Без разрешения «Универсальный доступ» macOS этого не позволит. \
-                Ementium ничего не отправляет в сеть и не записывает нажатия клавиш.
-                """)
+                Text("To open images with Space instead of Quick Look, Ementium intercepts Space in Finder and reads which file is selected. macOS won't allow this without Accessibility permission. Ementium sends nothing over the network and doesn't record keystrokes.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Разрешить") { model.onRequestAccessibility() }
+                    Button("Allow") { model.onRequestAccessibility() }
                         .buttonStyle(.borderedProminent)
-                    Button("Открыть настройки доступа") { model.onOpenAccessibilitySettings() }
+                    Button("Open Accessibility Settings") { model.onOpenAccessibilitySettings() }
                 }
-                Text("После выдачи доступа перехват включится сам, перезапускать Ementium не нужно.")
+                Text("Once access is granted, interception starts by itself — no need to restart Ementium.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -63,24 +59,24 @@ struct SettingsView: View {
     // MARK: - Основные
 
     private var generalSection: some View {
-        Section("Основные") {
-            Toggle("Перехватывать Пробел в Finder", isOn: $interceptionEnabled)
-            Toggle("Запускать при входе в систему", isOn: Binding(
+        Section("General") {
+            Toggle("Intercept Space in Finder", isOn: $interceptionEnabled)
+            Toggle("Open at Login", isOn: Binding(
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }
             ))
             if model.loginItemNeedsApproval {
                 HStack {
-                    Text("macOS ждёт подтверждения в «Объектах входа»")
+                    Text("macOS is waiting for approval in Login Items")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Открыть") { LoginItem.openLoginItemsSettings() }
+                    Button("Open") { LoginItem.openLoginItemsSettings() }
                 }
             }
-            Toggle("Показывать иконку в строке меню", isOn: $showMenuBarIcon)
+            Toggle("Show icon in menu bar", isOn: $showMenuBarIcon)
             HStack {
                 Spacer()
-                Button("Выйти из Ementium") { NSApp.terminate(nil) }
+                Button("Quit Ementium") { NSApp.terminate(nil) }
             }
         }
     }
@@ -88,10 +84,10 @@ struct SettingsView: View {
     // MARK: - Просмотр
 
     private var viewerSection: some View {
-        Section("Просмотр") {
+        Section("Viewer") {
             HStack(alignment: .center, spacing: 16) {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("Затемнение фона") {
+                    LabeledContent("Background dimming") {
                         HStack {
                             Slider(value: $dimming, in: 0...1)
                             Text("\(Int((dimming * 100).rounded())) %")
@@ -99,11 +95,11 @@ struct SettingsView: View {
                                 .frame(width: 44, alignment: .trailing)
                         }
                     }
-                    ColorPicker("Цвет фона", selection: colorBinding, supportsOpacity: false)
+                    ColorPicker("Background color", selection: colorBinding, supportsOpacity: false)
                 }
                 backgroundSample
             }
-            LabeledContent("Размер изображения на экране") {
+            LabeledContent("Image size on screen") {
                 HStack {
                     Slider(value: $screenFraction, in: 0.5...1)
                     Text("\(Int((screenFraction * 100).rounded())) %")
@@ -111,18 +107,18 @@ struct SettingsView: View {
                         .frame(width: 44, alignment: .trailing)
                 }
             }
-            Toggle("Увеличивать маленькие картинки до размера экрана", isOn: $upscaleSmallImages)
-            Toggle("Запоминать масштаб каждой картинки", isOn: $rememberZoomPerImage)
-            Toggle("Пробел закрывает просмотр", isOn: $spaceClosesViewer)
-            Toggle("Плавное появление и исчезновение", isOn: $animateViewer)
-            Picker("Сведения о снимке (удерживайте ⌥)", selection: $infoPosition) {
+            Toggle("Enlarge small images to fit the screen", isOn: $upscaleSmallImages)
+            Toggle("Remember zoom for each image", isOn: $rememberZoomPerImage)
+            Toggle("Space closes the viewer", isOn: $spaceClosesViewer)
+            Toggle("Fade in and out", isOn: $animateViewer)
+            Picker("Photo info (hold ⌥)", selection: $infoPosition) {
                 ForEach(InfoPanelPosition.allCases, id: \.rawValue) { position in
                     Text(position.title).tag(position.rawValue)
                 }
             }
             Toggle(isOn: $trashEnabled) {
-                Text("⌘⌫ перемещает в Корзину")
-                Text("Когда картинка открыта Пробелом в Finder. Вернуть — ⌘Z, пока просмотр открыт, или ⌘Z в Finder.")
+                Text("⌘⌫ moves to Trash")
+                Text("When the image was opened with Space in Finder. Undo with ⌘Z while the viewer is open, or ⌘Z in Finder.")
             }
         }
     }
@@ -139,7 +135,7 @@ struct SettingsView: View {
         .frame(width: 96, height: 60)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
-        .accessibilityLabel("Образец фона")
+        .accessibilityLabel("Background sample")
     }
 
     private var backgroundColor: Color {

@@ -45,29 +45,29 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         let statusText = switch status {
-        case .waitingForPermission: "Нет доступа к «Универсальному доступу»"
-        case .failed: "Не удалось включить перехват"
-        case .running: isEnabled ? "Перехват Пробела работает" : "Перехват выключен"
+        case .waitingForPermission: String(localized: "No Accessibility access")
+        case .failed: String(localized: "Couldn't start interception")
+        case .running: isEnabled ? String(localized: "Space interception is on") : String(localized: "Interception is off")
         }
         menu.addItem(NSMenuItem(title: statusText, action: nil, keyEquivalent: ""))
 
         if status != .running {
-            let settings = NSMenuItem(title: "Открыть настройки доступа…", action: #selector(openSettings), keyEquivalent: "")
+            let settings = NSMenuItem(title: String(localized: "Open Accessibility Settings…"), action: #selector(openSettings), keyEquivalent: "")
             settings.target = self
             menu.addItem(settings)
         }
 
         menu.addItem(.separator())
-        let toggle = NSMenuItem(title: "Перехватывать Пробел в Finder", action: #selector(toggle), keyEquivalent: "")
+        let toggle = NSMenuItem(title: String(localized: "Intercept Space in Finder"), action: #selector(toggle), keyEquivalent: "")
         toggle.target = self
         toggle.state = isEnabled ? .on : .off
         menu.addItem(toggle)
 
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Настройки…", action: #selector(openPreferences), keyEquivalent: ",")
+        let settings = NSMenuItem(title: String(localized: "Settings…"), action: #selector(openPreferences), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
-        menu.addItem(NSMenuItem(title: "Выйти из Ementium", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: String(localized: "Quit Ementium"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     @objc private func toggle() {

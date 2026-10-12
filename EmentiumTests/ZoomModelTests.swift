@@ -26,7 +26,7 @@ struct ZoomModelTests {
         #expect(zoom.scale == 4)
         for _ in 0..<5 { zoom.zoomOut() }
         #expect(zoom.isFit)
-        #expect(zoom.label == "Вписать")
+        #expect(zoom.label == String(localized: "Fit"))
     }
 
     // Уровни ниже «вписать» пропускаются: картинка, вписанная на 60 %, сразу идёт на 100 %.

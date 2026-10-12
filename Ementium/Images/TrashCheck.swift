@@ -16,11 +16,11 @@ nonisolated enum TrashCheck {
 
         var message: String {
             switch self {
-            case .missing: "Файл не найден"
-            case .alreadyInTrash: "Файл уже в Корзине"
-            case .noTrash: "Здесь нет Корзины — удалите в Finder"
-            case .locked: "Файл защищён — удалите в Finder"
-            case .noPermission: "Нет прав на удаление — удалите в Finder"
+            case .missing: String(localized: "File not found")
+            case .alreadyInTrash: String(localized: "The file is already in the Trash")
+            case .noTrash: String(localized: "No Trash here — delete in Finder")
+            case .locked: String(localized: "The file is locked — delete in Finder")
+            case .noPermission: String(localized: "No permission to delete — delete in Finder")
             }
         }
     }

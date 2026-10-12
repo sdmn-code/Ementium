@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Масштаб и сдвиг картинки в окне просмотра. Чистая геометрия, без AppKit — покрыта тестами.
 ///
@@ -66,7 +67,7 @@ nonisolated struct ZoomModel: Equatable {
 
     /// Масштаб для плашки: «Вписать» или проценты.
     var label: String {
-        isFit ? "Вписать" : "\(Int((scale * 100).rounded())) %"
+        isFit ? String(localized: "Fit") : "\(Int((scale * 100).rounded())) %"
     }
 
     // MARK: - Изменения

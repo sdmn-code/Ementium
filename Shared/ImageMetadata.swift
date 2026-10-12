@@ -5,6 +5,47 @@ import UniformTypeIdentifiers
 /// Сведения о снимке для карточки по `⌥`: файл и дата, камера и объектив, экспозиция, место съёмки.
 /// Разбор — чистая функция над словарём свойств ImageIO (покрыта тестами); чтение файла — `read`.
 nonisolated enum ImageMetadata {
+    /// Слова и числа карточки на языке пользователя: единицы, стороны света, десятичный разделитель, даты.
+    /// Явный параметр — чтобы тесты не зависели от языка системы.
+    struct Language: Sendable {
+        var millimeters: String
+        var seconds: String
+        var flash: String
+        var kilobytes: String
+        var megabytes: String
+        var north: String
+        var south: String
+        var east: String
+        var west: String
+        var locale: Locale
+
+        /// Язык пользователя: перевод — из каталога `Decoder` (карточку собирает сервис, у него своя сборка).
+        static var current: Language {
+            Language(
+                millimeters: String(localized: "unit.millimeters", defaultValue: "mm", table: "Decoder"),
+                seconds: String(localized: "unit.seconds", defaultValue: "s", table: "Decoder"),
+                flash: String(localized: "exposure.flash", defaultValue: "flash", table: "Decoder"),
+                kilobytes: String(localized: "unit.kilobytes", defaultValue: "KB", table: "Decoder"),
+                megabytes: String(localized: "unit.megabytes", defaultValue: "MB", table: "Decoder"),
+                north: String(localized: "gps.north", defaultValue: "N", table: "Decoder"),
+                south: String(localized: "gps.south", defaultValue: "S", table: "Decoder"),
+                east: String(localized: "gps.east", defaultValue: "E", table: "Decoder"),
+                west: String(localized: "gps.west", defaultValue: "W", table: "Decoder"),
+                locale: .autoupdatingCurrent
+            )
+        }
+
+        static let russian = Language(
+            millimeters: "мм", seconds: "с", flash: "вспышка", kilobytes: "КБ", megabytes: "МБ",
+            north: "с. ш.", south: "ю. ш.", east: "в. д.", west: "з. д.", locale: Locale(identifier: "ru_RU")
+        )
+
+        static let english = Language(
+            millimeters: "mm", seconds: "s", flash: "flash", kilobytes: "KB", megabytes: "MB",
+            north: "N", south: "S", east: "E", west: "W", locale: Locale(identifier: "en_US")
+        )
+    }
+
     /// То, что известно о файле без чтения картинки.
     struct FileFacts: Equatable {
         var name: String
@@ -31,17 +72,17 @@ nonisolated enum ImageMetadata {
 
     /// Строки карточки по данным файла: свойства ImageIO без декодирования картинки. Тип — подсказка
     /// для ImageIO (без неё RAW читается как TIFF).
-    static func read(_ data: Data, type: UTType?, file: FileFacts) -> [String] {
+    static func read(_ data: Data, type: UTType?, file: FileFacts, language: Language = .current) -> [String] {
         var properties: [String: Any] = [:]
         if let source = CGImageSourceCreateWithData(data as CFData, ImageLoader.sourceOptions(type) as CFDictionary),
            let copied = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] {
             properties = copied
         }
-        return lines(properties: properties, file: file)
+        return lines(properties: properties, file: file, language: language)
     }
 
     /// Строки карточки. Нет поля — нет строки; нет EXIF вовсе (скриншот, SVG) — только файл и дата.
-    static func lines(properties: [String: Any], file: FileFacts) -> [String] {
+    static func lines(properties: [String: Any], file: FileFacts, language: Language = .current) -> [String] {
         let exif = dictionary(properties[kCGImagePropertyExifDictionary as String])
         let exifAux = dictionary(properties[kCGImagePropertyExifAuxDictionary as String])
         let tiff = dictionary(properties[kCGImagePropertyTIFFDictionary as String])
@@ -50,16 +91,16 @@ nonisolated enum ImageMetadata {
         var lines = [file.name]
 
         if let taken = (exif[kCGImagePropertyExifDateTimeOriginal as String] as? String).flatMap(exifDate) {
-            lines.append(formatDate(taken, timeZone: utc))
+            lines.append(formatDate(taken, timeZone: utc, language: language))
         } else if let modified = file.modified {
-            lines.append(formatDate(modified, timeZone: .current))
+            lines.append(formatDate(modified, timeZone: .current, language: language))
         }
 
         var format: [String] = []
         if let type = file.typeDescription { format.append(type) }
         if let size = pixelSize(properties) { format.append("\(size.width)×\(size.height)") }
         if !format.isEmpty { lines.append(format.joined(separator: " · ")) }
-        if let bytes = file.byteCount { lines.append(fileSize(bytes)) }
+        if let bytes = file.byteCount { lines.append(fileSize(bytes, language: language)) }
 
         if let camera = camera(make: tiff[kCGImagePropertyTIFFMake as String] as? String,
                                model: tiff[kCGImagePropertyTIFFModel as String] as? String) {
@@ -71,13 +112,13 @@ nonisolated enum ImageMetadata {
 
         var optics: [String] = []
         if let focal = number(exif[kCGImagePropertyExifFocalLength as String]), focal > 0 {
-            optics.append("\(decimal(focal, digits: 1)) мм")
+            optics.append("\(decimal(focal, digits: 1, locale: language.locale)) \(language.millimeters)")
         }
         if let aperture = number(exif[kCGImagePropertyExifFNumber as String]), aperture > 0 {
-            optics.append("ƒ/\(decimal(aperture, digits: 1))")
+            optics.append("ƒ/\(decimal(aperture, digits: 1, locale: language.locale))")
         }
         if let time = number(exif[kCGImagePropertyExifExposureTime as String]), time > 0 {
-            optics.append(shutter(time))
+            optics.append(shutter(time, language: language))
         }
         if !optics.isEmpty { lines.append(optics.joined(separator: "  ")) }
 
@@ -86,14 +127,14 @@ nonisolated enum ImageMetadata {
             exposure.append("ISO \(Int(iso.rounded()))")
         }
         if let bias = number(exif[kCGImagePropertyExifExposureBiasValue as String]), abs(bias) >= 0.05 {
-            exposure.append("\(bias > 0 ? "+" : "−")\(decimal(abs(bias), digits: 1)) EV")
+            exposure.append("\(bias > 0 ? "+" : "−")\(decimal(abs(bias), digits: 1, locale: language.locale)) EV")
         }
         if let flash = number(exif[kCGImagePropertyExifFlash as String]), Int(flash) & 1 == 1 {
-            exposure.append("вспышка")
+            exposure.append(language.flash)
         }
         if !exposure.isEmpty { lines.append(exposure.joined(separator: "  ")) }
 
-        if let place = coordinates(gps) { lines.append(place) }
+        if let place = coordinates(gps, language: language) { lines.append(place) }
         return lines
     }
 
@@ -118,29 +159,30 @@ nonisolated enum ImageMetadata {
     }
 
     /// Короче секунды — «1/250 с»; дробная выдержка, не равная 1/n (0,4 с), и длинные — десятичной дробью.
-    static func shutter(_ seconds: Double) -> String {
+    static func shutter(_ seconds: Double, language: Language = .current) -> String {
         if seconds < 1 {
             let denominator = 1 / seconds
             if abs(denominator - denominator.rounded()) <= denominator * 0.05 {
-                return "1/\(Int(denominator.rounded())) с"
+                return "1/\(Int(denominator.rounded())) \(language.seconds)"
             }
         }
-        return "\(decimal(seconds, digits: 1)) с"
+        return "\(decimal(seconds, digits: 1, locale: language.locale)) \(language.seconds)"
     }
 
-    static func fileSize(_ bytes: Int) -> String {
-        if bytes < 1_000_000 { return "\(max(1, Int((Double(bytes) / 1000).rounded()))) КБ" }
-        return "\(decimal(Double(bytes) / 1_000_000, digits: 1, trimZero: false)) МБ"
+    static func fileSize(_ bytes: Int, language: Language = .current) -> String {
+        if bytes < 1_000_000 { return "\(max(1, Int((Double(bytes) / 1000).rounded()))) \(language.kilobytes)" }
+        return "\(decimal(Double(bytes) / 1_000_000, digits: 1, trimZero: false, locale: language.locale)) \(language.megabytes)"
     }
 
     /// «55,7558° с. ш., 37,6173° в. д.» — только цифры, без карты и сети.
-    private static func coordinates(_ gps: [String: Any]) -> String? {
+    private static func coordinates(_ gps: [String: Any], language: Language) -> String? {
         guard let latitude = number(gps[kCGImagePropertyGPSLatitude as String]),
               let longitude = number(gps[kCGImagePropertyGPSLongitude as String]) else { return nil }
         let south = (gps[kCGImagePropertyGPSLatitudeRef as String] as? String)?.uppercased() == "S"
         let west = (gps[kCGImagePropertyGPSLongitudeRef as String] as? String)?.uppercased() == "W"
-        return "\(decimal(latitude, digits: 4, trimZero: false))° \(south ? "ю. ш." : "с. ш."), "
-            + "\(decimal(longitude, digits: 4, trimZero: false))° \(west ? "з. д." : "в. д.")"
+        let locale = language.locale
+        return "\(decimal(latitude, digits: 4, trimZero: false, locale: locale))° \(south ? language.south : language.north), "
+            + "\(decimal(longitude, digits: 4, trimZero: false, locale: locale))° \(west ? language.west : language.east)"
     }
 
     // MARK: - Даты
@@ -156,13 +198,18 @@ nonisolated enum ImageMetadata {
         return parser.date(from: text.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)))
     }
 
-    /// «12 октября 2025, 14:32». Дату съёмки показываем в поясе разбора (как записала камера),
-    /// дату изменения файла — в поясе этого Mac, как в Finder.
-    static func formatDate(_ date: Date, timeZone: TimeZone) -> String {
+    /// «12 октября 2025, 14:32» / «October 12, 2025 at 14:32». Дату съёмки показываем в поясе разбора
+    /// (как записала камера), дату изменения файла — в поясе этого Mac, как в Finder.
+    static func formatDate(_ date: Date, timeZone: TimeZone, language: Language = .current) -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.locale = language.locale
         formatter.timeZone = timeZone
-        formatter.dateFormat = "d MMMM yyyy, HH:mm"
+        if language.locale.language.languageCode == .russian {
+            // Шаблон дал бы «2025 г.» — без «г.» строка короче.
+            formatter.dateFormat = "d MMMM yyyy, HH:mm"
+        } else {
+            formatter.setLocalizedDateFormatFromTemplate("dMMMMyHHmm")
+        }
         return formatter.string(from: date)
     }
 
@@ -186,12 +233,13 @@ nonisolated enum ImageMetadata {
         return trimmed?.isEmpty == false ? trimmed : nil
     }
 
-    /// Десятичная запятая; «,0» по умолчанию отбрасывается (ƒ/4, 35 мм).
-    static func decimal(_ value: Double, digits: Int, trimZero: Bool = true) -> String {
-        var text = String(format: "%.\(digits)f", value).replacingOccurrences(of: ".", with: ",")
-        if trimZero, text.contains(",") {
+    /// Десятичный разделитель — по языку («2,8» / «2.8»); «,0» по умолчанию отбрасывается (ƒ/4, 35 мм).
+    static func decimal(_ value: Double, digits: Int, trimZero: Bool = true, locale: Locale = .autoupdatingCurrent) -> String {
+        let separator = locale.decimalSeparator ?? "."
+        var text = String(format: "%.\(digits)f", value).replacingOccurrences(of: ".", with: separator)
+        if trimZero, text.contains(separator) {
             while text.hasSuffix("0") { text.removeLast() }
-            if text.hasSuffix(",") { text.removeLast() }
+            if text.hasSuffix(separator) { text.removeLast(separator.count) }
         }
         return text
     }

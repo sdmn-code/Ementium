@@ -13,7 +13,7 @@ struct EmentiumApp: App {
         }
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Настройки…") { appDelegate.showSettings() }
+                Button("Settings…") { appDelegate.showSettings() }
                     .keyboardShortcut(",", modifiers: .command)
             }
         }

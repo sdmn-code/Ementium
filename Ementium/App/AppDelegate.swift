@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .trash:
             guard viewer.isFollowing else { return }
             guard let url = viewer.displayedFollowedImage else {
-                viewer.showMessage("Картинка ещё загружается")
+                viewer.showMessage(String(localized: "Image is still loading"))
                 return
             }
             // Защищённый файл, нет прав, нет Корзины — Finder задал бы вопрос под оверлеем; не трогаем файл.
@@ -209,26 +209,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard viewer.followedFile == deleted else { return }
             if let next {
                 viewer.followed(next)
-                viewer.showMessage("В Корзине")
+                viewer.showMessage(String(localized: "Moved to Trash"))
             } else {
                 // Картинок в окне не осталось.
                 endFollowing()
             }
         case .restored(let url):
             viewer.followed(url)
-            viewer.showMessage("Восстановлено")
+            viewer.showMessage(String(localized: "Restored"))
         case .slow:
-            viewer.showMessage("Finder не отвечает — проверьте окно Finder")
+            viewer.showMessage(String(localized: "Finder isn't responding — check the Finder window"))
         case .failed(let undo):
-            viewer.showMessage(undo ? "Не удалось вернуть" : "Не удалось удалить")
+            viewer.showMessage(undo ? String(localized: "Couldn't restore") : String(localized: "Couldn't delete"))
         case .notHere:
-            viewer.showMessage("Здесь удалить нельзя — удалите в Finder")
+            viewer.showMessage(String(localized: "Can't delete here — delete in Finder"))
         case .cancelled:
-            viewer.showMessage("Выделение изменилось — нажмите ⌘⌫ ещё раз")
+            viewer.showMessage(String(localized: "Selection changed — press ⌘⌫ again"))
         case .nothingToUndo:
-            viewer.showMessage("Нечего возвращать")
+            viewer.showMessage(String(localized: "Nothing to restore"))
         case .alreadyBack:
-            viewer.showMessage("Файл уже на месте")
+            viewer.showMessage(String(localized: "The file is already back"))
         }
     }
 

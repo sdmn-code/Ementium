@@ -1,0 +1,556 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Accessibility access needed": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нужен «Универсальный доступ»"
+          }
+        }
+      }
+    },
+    "Allow": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить"
+          }
+        }
+      }
+    },
+    "Background color": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цвет фона"
+          }
+        }
+      }
+    },
+    "Background dimming": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Затемнение фона"
+          }
+        }
+      }
+    },
+    "Background sample": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Образец фона"
+          }
+        }
+      }
+    },
+    "Bottom Left": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слева внизу"
+          }
+        }
+      }
+    },
+    "Bottom Right": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Справа внизу"
+          }
+        }
+      }
+    },
+    "Can't delete here — delete in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Здесь удалить нельзя — удалите в Finder"
+          }
+        }
+      }
+    },
+    "Couldn't delete": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось удалить"
+          }
+        }
+      }
+    },
+    "Couldn't open": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось открыть"
+          }
+        }
+      }
+    },
+    "Couldn't restore": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось вернуть"
+          }
+        }
+      }
+    },
+    "Couldn't start interception": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось включить перехват"
+          }
+        }
+      }
+    },
+    "Deleting works when the image was opened with Space in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удаление — когда картинка открыта Пробелом в Finder"
+          }
+        }
+      }
+    },
+    "Done: select an image in Finder and press Space.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Готово: выделите картинку в Finder и нажмите Пробел."
+          }
+        }
+      }
+    },
+    "Ementium Settings": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ementium — настройки"
+          }
+        }
+      }
+    },
+    "Enlarge small images to fit the screen": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Увеличивать маленькие картинки до размера экрана"
+          }
+        }
+      }
+    },
+    "Fade in and out": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Плавное появление и исчезновение"
+          }
+        }
+      }
+    },
+    "File not found": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл не найден"
+          }
+        }
+      }
+    },
+    "Finder isn't responding — check the Finder window": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finder не отвечает — проверьте окно Finder"
+          }
+        }
+      }
+    },
+    "Fit": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вписать"
+          }
+        }
+      }
+    },
+    "General": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Основные"
+          }
+        }
+      }
+    },
+    "Image is still loading": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Картинка ещё загружается"
+          }
+        }
+      }
+    },
+    "Image size on screen": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размер изображения на экране"
+          }
+        }
+      }
+    },
+    "Intercept Space in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перехватывать Пробел в Finder"
+          }
+        }
+      }
+    },
+    "Interception is off": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перехват выключен"
+          }
+        }
+      }
+    },
+    "Moved to Trash": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В Корзине"
+          }
+        }
+      }
+    },
+    "No Accessibility access": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет доступа к «Универсальному доступу»"
+          }
+        }
+      }
+    },
+    "No Trash here — delete in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Здесь нет Корзины — удалите в Finder"
+          }
+        }
+      }
+    },
+    "No permission to delete — delete in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет прав на удаление — удалите в Finder"
+          }
+        }
+      }
+    },
+    "Nothing to restore": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нечего возвращать"
+          }
+        }
+      }
+    },
+    "Once access is granted, interception starts by itself — no need to restart Ementium.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "После выдачи доступа перехват включится сам, перезапускать Ementium не нужно."
+          }
+        }
+      }
+    },
+    "Open": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть"
+          }
+        }
+      }
+    },
+    "Open Accessibility Settings": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть настройки доступа"
+          }
+        }
+      }
+    },
+    "Open Accessibility Settings…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть настройки доступа…"
+          }
+        }
+      }
+    },
+    "Open at Login": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запускать при входе в систему"
+          }
+        }
+      }
+    },
+    "Permission": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешение"
+          }
+        }
+      }
+    },
+    "Photo info (hold ⌥)": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сведения о снимке (удерживайте ⌥)"
+          }
+        }
+      }
+    },
+    "Quit Ementium": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выйти из Ementium"
+          }
+        }
+      }
+    },
+    "Remember zoom for each image": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запоминать масштаб каждой картинки"
+          }
+        }
+      }
+    },
+    "Restored": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Восстановлено"
+          }
+        }
+      }
+    },
+    "Selection changed — press ⌘⌫ again": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выделение изменилось — нажмите ⌘⌫ ещё раз"
+          }
+        }
+      }
+    },
+    "Settings…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настройки…"
+          }
+        }
+      }
+    },
+    "Show icon in menu bar": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать иконку в строке меню"
+          }
+        }
+      }
+    },
+    "Space closes the viewer": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пробел закрывает просмотр"
+          }
+        }
+      }
+    },
+    "Space interception is on": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перехват Пробела работает"
+          }
+        }
+      }
+    },
+    "The file is already back": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл уже на месте"
+          }
+        }
+      }
+    },
+    "The file is already in the Trash": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл уже в Корзине"
+          }
+        }
+      }
+    },
+    "The file is locked — delete in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл защищён — удалите в Finder"
+          }
+        }
+      }
+    },
+    "To open images with Space instead of Quick Look, Ementium intercepts Space in Finder and reads which file is selected. macOS won't allow this without Accessibility permission. Ementium sends nothing over the network and doesn't record keystrokes.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чтобы открывать картинки по Пробелу вместо Quick Look, Ementium перехватывает Пробел в Finder и читает, какой файл выделен. Без разрешения «Универсальный доступ» macOS этого не позволит. Ementium ничего не отправляет в сеть и не записывает нажатия клавиш."
+          }
+        }
+      }
+    },
+    "Top Left": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слева вверху"
+          }
+        }
+      }
+    },
+    "Top Right": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Справа вверху"
+          }
+        }
+      }
+    },
+    "Viewer": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Просмотр"
+          }
+        }
+      }
+    },
+    "When the image was opened with Space in Finder. Undo with ⌘Z while the viewer is open, or ⌘Z in Finder.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Когда картинка открыта Пробелом в Finder. Вернуть — ⌘Z, пока просмотр открыт, или ⌘Z в Finder."
+          }
+        }
+      }
+    },
+    "macOS is waiting for approval in Login Items": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS ждёт подтверждения в «Объектах входа»"
+          }
+        }
+      }
+    },
+    "⌘⌫ moves to Trash": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘⌫ перемещает в Корзину"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

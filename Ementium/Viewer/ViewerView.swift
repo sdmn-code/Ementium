@@ -210,7 +210,7 @@ final class ViewerView: NSView {
     func showError(fileName: String) {
         imageLayer.contents = nil
         zoom = nil
-        messageLabel.stringValue = "\(fileName)\nНе удалось открыть"
+        messageLabel.stringValue = "\(fileName)\n" + String(localized: "Couldn't open")
         messageLabel.isHidden = false
         applyZoom(animated: false)
     }

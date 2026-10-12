@@ -113,7 +113,7 @@ struct ImageMetadataTests {
                 key(kCGImagePropertyGPSLongitude): 37.61730, key(kCGImagePropertyGPSLongitudeRef): "E",
             ],
         ]
-        #expect(ImageMetadata.lines(properties: properties, file: file) == [
+        #expect(ImageMetadata.lines(properties: properties, file: file, language: .russian) == [
             "DSC01234.ARW",
             "12 октября 2025, 14:32",
             "Изображение RAW Sony · 6000×4000",
@@ -130,10 +130,10 @@ struct ImageMetadataTests {
     @Test func noExifOnlyFileFacts() {
         let modified = Date(timeIntervalSince1970: 0)
         let facts = ImageMetadata.FileFacts(name: "screen.png", byteCount: 512, modified: modified, typeDescription: nil)
-        let lines = ImageMetadata.lines(properties: [:], file: facts)
+        let lines = ImageMetadata.lines(properties: [:], file: facts, language: .russian)
         #expect(lines.count == 3)
         #expect(lines[0] == "screen.png")
-        #expect(lines[1] == ImageMetadata.formatDate(modified, timeZone: .current))
+        #expect(lines[1] == ImageMetadata.formatDate(modified, timeZone: .current, language: .russian))
         #expect(lines[2] == "1 КБ")
     }
 
@@ -142,14 +142,14 @@ struct ImageMetadataTests {
             key(kCGImagePropertyPixelWidth): 6000, key(kCGImagePropertyPixelHeight): 4000, key(kCGImagePropertyOrientation): 6,
         ]
         let facts = ImageMetadata.FileFacts(name: "p.jpg", typeDescription: "JPEG")
-        #expect(ImageMetadata.lines(properties: properties, file: facts).contains("JPEG · 4000×6000"))
+        #expect(ImageMetadata.lines(properties: properties, file: facts, language: .russian).contains("JPEG · 4000×6000"))
     }
 
     @Test(arguments: [
         (0.004, "1/250 с"), (1.0 / 3, "1/3 с"), (0.4, "0,4 с"), (2.0, "2 с"), (1.5, "1,5 с"), (1.0 / 8000, "1/8000 с"),
     ])
     func shutterSpeeds(seconds: Double, expected: String) {
-        #expect(ImageMetadata.shutter(seconds) == expected)
+        #expect(ImageMetadata.shutter(seconds, language: .russian) == expected)
     }
 
     @Test func cameraNameWithoutRepeatedBrand() {
@@ -175,16 +175,43 @@ struct ImageMetadataTests {
                 key(kCGImagePropertyGPSLongitude): 151.2093, key(kCGImagePropertyGPSLongitudeRef): "W",
             ],
         ]
-        let lines = ImageMetadata.lines(properties: properties, file: ImageMetadata.FileFacts(name: "a.jpg"))
+        let lines = ImageMetadata.lines(properties: properties, file: ImageMetadata.FileFacts(name: "a.jpg"), language: .russian)
         #expect(lines.contains("ƒ/4"))
         #expect(lines.contains("ISO 100  вспышка"))
         #expect(lines.contains("33,8688° ю. ш., 151,2093° з. д."))
     }
 
     @Test func fileSizes() {
-        #expect(ImageMetadata.fileSize(900) == "1 КБ")
-        #expect(ImageMetadata.fileSize(450_000) == "450 КБ")
-        #expect(ImageMetadata.fileSize(2_000_000) == "2,0 МБ")
+        #expect(ImageMetadata.fileSize(900, language: .russian) == "1 КБ")
+        #expect(ImageMetadata.fileSize(450_000, language: .russian) == "450 КБ")
+        #expect(ImageMetadata.fileSize(2_000_000, language: .russian) == "2,0 МБ")
+    }
+
+    // Английский: точка, «mm», «s», стороны света буквами, дата по шаблону языка.
+    @Test func englishCard() {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let properties: [String: Any] = [
+            key(kCGImagePropertyExifDictionary): [
+                key(kCGImagePropertyExifDateTimeOriginal): "2025:10:12 14:32:05",
+                key(kCGImagePropertyExifFocalLength): 35.0,
+                key(kCGImagePropertyExifFNumber): 2.8,
+                key(kCGImagePropertyExifExposureTime): 0.004,
+                key(kCGImagePropertyExifFlash): 1,
+            ],
+            key(kCGImagePropertyGPSDictionary): [
+                key(kCGImagePropertyGPSLatitude): 33.8688, key(kCGImagePropertyGPSLatitudeRef): "S",
+                key(kCGImagePropertyGPSLongitude): 151.2093, key(kCGImagePropertyGPSLongitudeRef): "E",
+            ],
+        ]
+        let facts = ImageMetadata.FileFacts(name: "a.jpg", byteCount: 2_500_000)
+        let lines = ImageMetadata.lines(properties: properties, file: facts, language: .english)
+        #expect(lines.contains("35 mm  ƒ/2.8  1/250 s"))
+        #expect(lines.contains("flash"))
+        #expect(lines.contains("33.8688° S, 151.2093° E"))
+        #expect(lines.contains("2.5 MB"))
+        let taken = ImageMetadata.formatDate(Date(timeIntervalSince1970: 1_760_279_520), timeZone: utc, language: .english)
+        #expect(taken.contains("October") && taken.contains("2025"))
+        #expect(!taken.contains("октября"))
     }
 
     // Сведения читаются из настоящего файла без декодирования картинки.

@@ -78,10 +78,10 @@ nonisolated enum InfoPanelPosition: String, CaseIterable, Equatable {
 
     var title: String {
         switch self {
-        case .topRight: "Справа вверху"
-        case .topLeft: "Слева вверху"
-        case .bottomLeft: "Слева внизу"
-        case .bottomRight: "Справа внизу"
+        case .topRight: String(localized: "Top Right")
+        case .topLeft: String(localized: "Top Left")
+        case .bottomLeft: String(localized: "Bottom Left")
+        case .bottomRight: String(localized: "Bottom Right")
         }
     }
 }

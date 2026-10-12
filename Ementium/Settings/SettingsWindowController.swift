@@ -60,7 +60,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             // роняет приложение. Поэтому размер задан явно, а не влезшее прокручивается внутри.
             hosting.sizingOptions = []
             let created = NSWindow(contentViewController: hosting)
-            created.title = "Ementium — настройки"
+            created.title = String(localized: "Ementium Settings")
             created.styleMask = [.titled, .closable, .resizable]
             let screenHeight = NSScreen.main?.visibleFrame.height ?? Self.preferredHeight
             created.setContentSize(NSSize(width: Self.width, height: min(Self.preferredHeight, screenHeight - 40)))
