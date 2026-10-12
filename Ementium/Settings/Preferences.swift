@@ -16,6 +16,8 @@ nonisolated enum Preferences {
         static let rememberZoomPerImage = "rememberZoomPerImage"
         static let spaceClosesViewer = "spaceClosesViewer"
         static let animateViewer = "animateViewer"
+        /// `⌘⌫` в просмотре перемещает картинку в Корзину (режим «следовать»). По умолчанию выключено.
+        static let trashWithCommandDelete = "trashWithCommandDelete"
         /// Угол карточки сведений о снимке (по `⌥`).
         static let infoPanelPosition = "infoPanelPosition"
     }
@@ -32,6 +34,7 @@ nonisolated enum Preferences {
         Key.spaceClosesViewer: true,
         Key.animateViewer: true,
         Key.infoPanelPosition: InfoPanelPosition.topRight.rawValue,
+        Key.trashWithCommandDelete: false,
     ] }
 
     static func register(in store: UserDefaults = .standard) {
@@ -50,6 +53,7 @@ nonisolated struct ViewerPreferences: Equatable {
     var spaceClosesViewer: Bool
     var animate: Bool
     var infoPosition: InfoPanelPosition
+    var trashEnabled: Bool
 
     init(from store: UserDefaults = .standard) {
         Preferences.register(in: store)
@@ -61,6 +65,7 @@ nonisolated struct ViewerPreferences: Equatable {
         spaceClosesViewer = store.bool(forKey: Preferences.Key.spaceClosesViewer)
         animate = store.bool(forKey: Preferences.Key.animateViewer)
         infoPosition = store.string(forKey: Preferences.Key.infoPanelPosition).flatMap(InfoPanelPosition.init) ?? .topRight
+        trashEnabled = store.bool(forKey: Preferences.Key.trashWithCommandDelete)
     }
 }
 

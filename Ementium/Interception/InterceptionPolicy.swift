@@ -20,6 +20,10 @@ nonisolated enum ViewerKeyAction: Equatable {
     case zoom(ViewerCommand)
     /// `⌘,` — закрыть просмотр и открыть настройки Ementium.
     case openSettings
+    /// `⌘⌫` — переместить показанную картинку в Корзину (через Finder).
+    case trash
+    /// `⌘Z` — вернуть удалённое в этом сеансе.
+    case undoTrash
 }
 
 /// Жест трекпада при открытом просмотре. Жесты масштаба macOS отдаёт активному приложению — обычно Finder,
@@ -69,7 +73,7 @@ nonisolated enum InterceptionPolicy {
     /// Список — сочетания из настроек пользователя (`SystemShortcuts`) и несколько неназначаемых.
     static func followingAction(
         keyCode: UInt16, characters: String?, flags: CGEventFlags, isRepeat: Bool,
-        systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true
+        systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true, trashEnabled: Bool = false
     ) -> ViewerKeyAction {
         let modifiers = flags.intersection(SystemShortcuts.modifierMask)
         if let fixed = fixedSystemShortcut(keyCode: keyCode, modifiers: modifiers) {
@@ -102,6 +106,12 @@ nonisolated enum InterceptionPolicy {
             return .close
         case .openSettings?:
             return .openSettings
+        // Без настройки ⌘⌫ и ⌘Z проглатываются, как раньше: Finder за оверлеем не должен ничего удалять невидимо.
+        // Автоповтор — никогда: зажатый ⌘⌫ удалял бы папку по картинке, зажатый ⌘Z — возвращал бы всё подряд.
+        case .trash?:
+            return trashEnabled && !isRepeat ? .trash : .swallow
+        case .undo?:
+            return trashEnabled && !isRepeat ? .undoTrash : .swallow
         case .quit?:
             return .quit
         case let zoom? where [.zoomIn, .zoomOut, .zoomFit].contains(zoom):

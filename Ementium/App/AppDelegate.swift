@@ -23,6 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.viewer.followedNeighbors(neighbors, around: current) }
             }
+        },
+        onTrash: { [weak self] event in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.handleTrash(event) }
+            }
         }
     )
     private lazy var interceptor = KeyInterceptor(
@@ -174,8 +179,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .openSettings:
             endFollowing()
             showSettings()
+        case .trash:
+            guard viewer.isFollowing else { return }
+            guard let url = viewer.displayedFollowedImage else {
+                viewer.showMessage("Картинка ещё загружается")
+                return
+            }
+            // Защищённый файл, нет прав, нет Корзины — Finder задал бы вопрос под оверлеем; не трогаем файл.
+            Task {
+                if let problem = await TrashCheck.problem(url) {
+                    viewer.showMessage(problem.message)
+                } else if viewer.displayedFollowedImage == url {
+                    bridge.trash(url)
+                }
+            }
+        case .undoTrash:
+            bridge.undoTrash()
         case .step, .pass, .passAndClose, .swallow:
             break
+        }
+    }
+
+    private func handleTrash(_ event: FinderBridge.TrashEvent) {
+        switch event {
+        case .moved(let deleted, let next):
+            // Событие от прошлого сеанса просмотра (закрыли и открыли снова, пока оно шло) — не наше.
+            guard viewer.followedFile == deleted else { return }
+            if let next {
+                viewer.followed(next)
+                viewer.showMessage("В Корзине")
+            } else {
+                // Картинок в окне не осталось.
+                endFollowing()
+            }
+        case .restored(let url):
+            viewer.followed(url)
+            viewer.showMessage("Восстановлено")
+        case .slow:
+            viewer.showMessage("Finder не отвечает — проверьте окно Finder")
+        case .failed(let undo):
+            viewer.showMessage(undo ? "Не удалось вернуть" : "Не удалось удалить")
+        case .notHere:
+            viewer.showMessage("Здесь удалить нельзя — удалите в Finder")
+        case .cancelled:
+            viewer.showMessage("Выделение изменилось — нажмите ⌘⌫ ещё раз")
+        case .nothingToUndo:
+            viewer.showMessage("Нечего возвращать")
+        case .alreadyBack:
+            viewer.showMessage("Файл уже на месте")
         }
     }
 

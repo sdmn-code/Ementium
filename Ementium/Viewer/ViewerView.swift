@@ -279,12 +279,17 @@ final class ViewerView: NSView {
         }
     }
 
-    private func showZoomBadge(_ text: String) {
+    /// Сообщение в той же плашке, что и масштаб, — чуть дольше, чтобы успеть прочитать.
+    func showMessage(_ text: String) {
+        showZoomBadge(text, for: .seconds(1.6))
+    }
+
+    private func showZoomBadge(_ text: String, for duration: Duration = .seconds(1)) {
         zoomLabel.stringValue = text
         zoomBadge.alphaValue = 1
         zoomBadgeHide?.cancel()
         zoomBadgeHide = Task {
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.3

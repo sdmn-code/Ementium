@@ -149,6 +149,24 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         loadCurrent()
     }
 
+    /// Режим «следовать»: файл, выделенный в Finder, — только если на экране именно он. Пока новая картинка
+    /// декодируется, видна прежняя — удалять в этот момент нельзя: пользователь удалил бы то, чего не видел.
+    var displayedFollowedImage: URL? {
+        guard isFollowing, let followedURL, displayedURL == followedURL, loaded != nil else { return nil }
+        return followedURL
+    }
+
+    /// Режим «следовать»: файл, выделенный в Finder (даже если ещё не показан).
+    var followedFile: URL? {
+        isFollowing ? followedURL : nil
+    }
+
+    /// Короткое сообщение внизу экрана («В Корзине», «Здесь нет Корзины…»).
+    func showMessage(_ text: String) {
+        guard state == .visible else { return }
+        viewerView.showMessage(text)
+    }
+
     /// Мост сообщает, что Finder ищет следующую картинку (пропускает документы).
     func setNavigationBusy(_ busy: Bool) {
         isNavigationBusy = busy && isFollowing
@@ -233,7 +251,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             preferences = ViewerPreferences()
             viewerView.apply(preferences)
             zoomMemory.isEnabled = preferences.rememberZoomPerImage
-            interception.update { $0.spaceClosesViewer = preferences.spaceClosesViewer }
+            interception.update {
+                $0.spaceClosesViewer = preferences.spaceClosesViewer
+                $0.trashEnabled = preferences.trashEnabled
+            }
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
             decodeSize = Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
@@ -335,6 +356,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         case .openSettings:
             close(returnFocus: false)
             onOpenSettings?()
+        case .trash:
+            // Удаление — через Finder, а здесь Finder не знает, что показано.
+            if preferences.trashEnabled { viewerView.showMessage("Удаление — когда картинка открыта Пробелом в Finder") }
+        case .undo:
+            break
         }
     }
 

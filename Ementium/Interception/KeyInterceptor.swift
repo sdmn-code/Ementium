@@ -171,7 +171,8 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         onViewerInput(.keyPressed(isArrow: ArrowKey(rawValue: keyCode) != nil))
         let action = InterceptionPolicy.followingAction(
             keyCode: keyCode, characters: characters(of: event), flags: event.flags, isRepeat: isRepeat,
-            systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer
+            systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer,
+            trashEnabled: snapshot.trashEnabled
         )
         switch action {
         case .pass:
@@ -182,7 +183,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit, .zoom, .openSettings:
+        case .step, .close, .quit, .zoom, .openSettings, .trash, .undoTrash:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

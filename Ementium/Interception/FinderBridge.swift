@@ -11,6 +11,34 @@ import os
 nonisolated final class FinderBridge: @unchecked Sendable {
     static let finderBundleID = "com.apple.finder"
 
+    /// Чем закончилось удаление или возврат файла (вызывается на потоке моста).
+    enum TrashEvent: Sendable, Equatable {
+        /// `deleted` в Корзине; `next` — что теперь выделено и показывать (`nil` — картинок не осталось).
+        case moved(deleted: URL, next: URL?)
+        /// `⌘Z`: файл вернулся и выделен.
+        case restored(URL)
+        /// Finder не ответил за 3 с — возможно, спрашивает что-то в окне под оверлеем. Ждём дальше.
+        case slow(undo: Bool)
+        /// Так и не ответил.
+        case failed(undo: Bool)
+        /// Здесь удалить нельзя (рабочий стол, группы в «значках»).
+        case notHere
+        /// Выделение в Finder изменилось, пока готовились, — ничего не отправлено.
+        case cancelled
+        /// `⌘Z`, а в этом сеансе ничего не удаляли.
+        case nothingToUndo
+        /// Файл уже на месте — `⌘Z` не отправлен.
+        case alreadyBack(URL)
+    }
+
+    private struct TrashOperation {
+        let url: URL
+        let target: URL?
+        let isUndo: Bool
+        let started = Date()
+        var isSlow = false
+    }
+
     private let state: InterceptionState
     /// Finder выделил картинку, которую нужно показать (вызывается на потоке моста).
     private let onShow: @Sendable (URL) -> Void
@@ -18,6 +46,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private let onBusy: @Sendable (Bool) -> Void
     /// Соседние картинки показанной в порядке предзагрузки и сама показанная (вызывается на потоке моста).
     private let onNeighbors: @Sendable ([URL], URL) -> Void
+    private let onTrash: @Sendable (TrashEvent) -> Void
     private let thread = RunLoopThread(name: "Ementium.FinderBridge")
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "finder")
 
@@ -44,6 +73,15 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Счётчик нажатий стрелок. Увеличивается на потоке перехвата **до** постановки шага в очередь моста,
     /// чтобы чтение соседей, которое идёт на потоке моста, увидело нажатие и прервалось.
     private let stepCount = OSAllocatedUnfairLock(initialState: 0)
+    /// Удалённые в этом сеансе просмотра — `⌘Z` возвращает только их (иначе отменили бы чужое действие в Finder).
+    private var trashed: [URL] = []
+    /// Идёт удаление или возврат: ждём, пока файл исчезнет (появится).
+    private var trashOperation: TrashOperation?
+    private var trashTimer: Timer?
+    /// `⌘⌫`, отложенный до того, как долетят отправленные стрелки.
+    private var pendingTrash: Timer?
+    /// Когда Finder в последний раз получил от нас стрелку.
+    private var lastKeyPost = Date.distantPast
 
     /// Без открытого просмотра ждём, пока выделение перестанет меняться (зажатая стрелка в Finder).
     private static let debounceInterval = 0.05
@@ -58,6 +96,14 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private static let neighborDelay = 0.15
     /// Соседей ищем недалеко: предзагрузка — не листание, держать поток моста ради неё долго нельзя.
     private static let neighborLimit = 50
+    /// Finder удаляет и возвращает файл за 0,2–1,5 с (прототип FinderTrashProbe): дольше 3 с — предупреждаем,
+    /// после 12 с — сдаёмся.
+    private static let trashSlow = 3.0
+    private static let trashGiveUp = 12.0
+    /// Finder отвечает на стрелку за 20–180 мс — после этого выделение уже не сдвинется.
+    private static let keysSettleTime = 0.35
+    /// Цель после удаления ищем не дальше: поиск идёт до отправки ⌘⌫, держать его долго нельзя.
+    private static let trashTargetLimit = 200
 
     private static let notifications = [
         kAXFocusedUIElementChangedNotification,
@@ -70,12 +116,14 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         state: InterceptionState,
         onShow: @escaping @Sendable (URL) -> Void,
         onBusy: @escaping @Sendable (Bool) -> Void,
-        onNeighbors: @escaping @Sendable ([URL], URL) -> Void
+        onNeighbors: @escaping @Sendable ([URL], URL) -> Void,
+        onTrash: @escaping @Sendable (TrashEvent) -> Void
     ) {
         self.state = state
         self.onShow = onShow
         self.onBusy = onBusy
         self.onNeighbors = onNeighbors
+        self.onTrash = onTrash
     }
 
     func start() {
@@ -100,6 +148,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.queuedStep = nil
             self.edgeTimer?.invalidate()
             self.lastNeighbors = nil
+            self.trashed.removeAll()
+            self.cancelTrash()
             self.scheduleNeighbors()
         }
     }
@@ -109,9 +159,22 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         thread.perform {
             self.queuedStep = nil
             self.neighborTimer?.invalidate()
+            self.trashed.removeAll()
+            self.cancelTrash()
             self.execute(self.navigation?.finish() ?? [])
             self.forgetNavigationIfDone()
         }
+    }
+
+    /// `⌘⌫` в просмотре: переместить показанную картинку в Корзину через Finder.
+    /// Проверка «можно ли» (Корзина, защита, права) — до вызова, у вызывающего.
+    func trash(_ url: URL) {
+        thread.perform { self.performTrash(url) }
+    }
+
+    /// `⌘Z` в просмотре: вернуть последнюю удалённую в этом сеансе.
+    func undoTrash() {
+        thread.perform { self.performUndoTrash() }
     }
 
     /// Пользователь нажал стрелку в просмотре (вызывается с потока перехвата).
@@ -204,7 +267,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         publish(isTextField: false, selection: selection)
 
         // Пустое выделение бывает промежуточным (колонки перестраиваются), несколько файлов — не наш шаг.
-        if navigation != nil, selection.count == 1 {
+        // Пока идёт удаление или возврат, выделение Finder ставит сам как придётся — цель выделим мы.
+        if navigation != nil, trashOperation == nil, selection.count == 1 {
             let url = selection[0]
             let outputs = navigation?.selectionChanged(to: url, isImage: ImageDirectory.isImage(url)) ?? []
             execute(outputs)
@@ -217,7 +281,10 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     // MARK: - Поток моста: шаг пользователя
 
     private func performStep(_ key: ArrowKey) {
-        guard let current = navigation, !current.isFinishing else { return }
+        // Перелистнули — отложенное удаление показанной картинки больше не к месту.
+        pendingTrash?.invalidate()
+        pendingTrash = nil
+        guard let current = navigation, !current.isFinishing, trashOperation == nil else { return }
         neighborTimer?.invalidate()
         // Пока пачка в полёте, Finder стоит где-то посреди документов: заглянув оттуда, мы отправили бы
         // вторую пачку и перелетели цель. Откладываем нажатие до показа картинки.
@@ -301,6 +368,15 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Элементы вида в экранном порядке, их положения (только для значков и галереи) и индекс выделенного.
     /// `nil` — заглянуть нельзя (рабочий стол, группы в значках, выделенный не найден).
     private func displayedItems() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
+        guard let viewElement, let (items, positions) = orderedItems(),
+              let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
+                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first,
+              let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
+        return (items, positions, start)
+    }
+
+    /// Элементы вида в экранном порядке и их положения (только для значков и галереи).
+    private func orderedItems() -> (items: [AXUIElement], positions: [CGPoint?])? {
         guard [.list, .columns, .gallery, .icons].contains(viewKind), let viewElement else { return nil }
         var items: [AXUIElement]
         var positions: [CGPoint?] = []
@@ -321,10 +397,171 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             items = order.map { items[$0] }
             positions = order.map { unordered[$0] }
         }
-        guard let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
-                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first,
-              let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
-        return (items, positions, start)
+        return (items, positions)
+    }
+
+    // MARK: - Поток моста: удаление в Корзину
+
+    /// `⌘⌫` удаляет то, что выделено в Finder, поэтому всё проверяется прямо перед отправкой:
+    /// ничего не в полёте, Finder активен, выделен ровно показанный файл.
+    private func performTrash(_ url: URL) {
+        pendingTrash?.invalidate()
+        pendingTrash = nil
+        // Пользователь успел перелистнуть — удалять уже нечего, молча.
+        guard trashOperation == nil, let navigation, navigation.isSettled, navigation.shown == url else { return }
+        // Стрелка ещё может быть в очереди Finder: ⌘⌫ после неё удалил бы соседний файл. Ждём и проверяем заново.
+        let wait = Self.keysSettleTime - Date().timeIntervalSince(lastKeyPost)
+        if wait > 0 {
+            let timer = Timer(timeInterval: wait, repeats: false) { [weak self] _ in self?.performTrash(url) }
+            RunLoop.current.add(timer, forMode: .default)
+            pendingTrash = timer
+            return
+        }
+        guard isFinderReady, let focused = focusedViewElement() else { return }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard let (items, _, index) = displayedItems(), findURL(items[index], depth: 2) == url else {
+            onTrash(.notHere)
+            return
+        }
+        // Цель — до удаления: после него элементы окна перестроятся, а выделение Finder непредсказуемо.
+        let target = TrashTarget.choose(
+            deleting: index, count: items.count,
+            url: { self.findURL(items[$0], depth: 2) }, isImage: ImageDirectory.isImage, limit: Self.trashTargetLimit
+        )
+        // Поиск цели занял время — фокус и выделение перечитываем прямо перед отправкой.
+        guard isFinderReady, let again = focusedViewElement(), CFEqual(again, focused),
+              selectedItems(of: focused).count == 1,
+              selectedItems(of: focused).first.flatMap({ findURL($0, depth: 2) }) == url,
+              Date().timeIntervalSince(lastKeyPost) >= Self.keysSettleTime else {
+            log.error("Удаление отменено: выделение в Finder изменилось")
+            onTrash(.cancelled)
+            return
+        }
+        neighborTimer?.invalidate()
+        edgeTimer?.invalidate()
+        queuedStep = nil
+        trashOperation = TrashOperation(url: url, target: target, isUndo: false)
+        postCommand(Self.deleteKey)
+        startTrashPolling()
+    }
+
+    private func performUndoTrash() {
+        guard trashOperation == nil, navigation != nil, isFinderReady else { return }
+        guard let url = trashed.last else {
+            onTrash(.nothingToUndo)
+            return
+        }
+        trashed.removeLast()
+        // Файл уже на месте (вернули иначе или на его место положили другой) — ⌘Z отменил бы что-то чужое.
+        if FileManager.default.fileExists(atPath: url.path) {
+            onTrash(.alreadyBack(url))
+            return
+        }
+        neighborTimer?.invalidate()
+        edgeTimer?.invalidate()
+        queuedStep = nil
+        trashOperation = TrashOperation(url: url, target: nil, isUndo: true)
+        postCommand(Self.zKey)
+        startTrashPolling()
+    }
+
+    /// Finder активен и просмотр открыт в режиме «следовать»: иначе клавиши Finder слать нельзя.
+    private var isFinderReady: Bool {
+        let snapshot = state.snapshot
+        return snapshot.isViewerVisible && snapshot.isFollowingFinder && snapshot.isFinderFrontmost
+    }
+
+    private func focusedViewElement() -> AXUIElement? {
+        guard let finderApp else { return nil }
+        return element(attribute(finderApp, kAXFocusedUIElementAttribute))
+    }
+
+    private func selectedItems(of view: AXUIElement) -> [AXUIElement] {
+        elements(attribute(view, kAXSelectedRowsAttribute)) ?? elements(attribute(view, kAXSelectedChildrenAttribute)) ?? []
+    }
+
+    private func startTrashPolling() {
+        trashTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.pollTrash() }
+        RunLoop.current.add(timer, forMode: .default)
+        trashTimer = timer
+    }
+
+    private func pollTrash() {
+        guard var operation = trashOperation else {
+            cancelTrash()
+            return
+        }
+        let exists = FileManager.default.fileExists(atPath: operation.url.path)
+        let elapsed = Date().timeIntervalSince(operation.started)
+        if operation.isUndo ? exists : !exists {
+            finishTrash()
+        } else if elapsed > Self.trashGiveUp {
+            // Не возвращаем запись в стек вслепую: что сделал Finder, мы не знаем.
+            log.error("Finder не \(operation.isUndo ? "вернул" : "удалил", privacy: .public) файл за \(Self.trashGiveUp) с")
+            cancelTrash()
+            onTrash(.failed(undo: operation.isUndo))
+        } else if elapsed > Self.trashSlow, !operation.isSlow {
+            // Обычно 0,2–1,5 с. Дольше — возможно, Finder что-то спрашивает в окне под оверлеем. Ждём дальше:
+            // поздно удалённый файл всё равно засчитаем.
+            operation.isSlow = true
+            trashOperation = operation
+            onTrash(.slow(undo: operation.isUndo))
+        }
+    }
+
+    private func finishTrash() {
+        guard let operation = trashOperation else { return }
+        cancelTrash()
+        // Окно перестроилось — заново берём элемент вида с фокусом.
+        if let focused = focusedViewElement() {
+            viewKind = kind(of: focused)
+            viewElement = focused
+        }
+        let shown: URL?
+        if operation.isUndo {
+            shown = operation.url
+        } else {
+            trashed.append(operation.url)
+            shown = operation.target
+        }
+        if let shown {
+            select(shown)
+            navigation = FinderNavigation(showing: shown)
+            lastNeighbors = nil
+            // Finder перестраивает вид асинхронно и может поставить своё выделение уже после нашего — проверим ещё раз.
+            let check = Timer(timeInterval: 0.2, repeats: false) { [weak self] _ in self?.reselectIfNeeded(shown) }
+            RunLoop.current.add(check, forMode: .default)
+            scheduleNeighbors()
+        }
+        onTrash(operation.isUndo ? .restored(operation.url) : .moved(deleted: operation.url, next: shown))
+    }
+
+    private func reselectIfNeeded(_ url: URL) {
+        guard trashOperation == nil, navigation?.shown == url, let viewElement,
+              selectedItems(of: viewElement).first.flatMap({ findURL($0, depth: 2) }) != url else { return }
+        select(url)
+    }
+
+    private func cancelTrash() {
+        trashTimer?.invalidate()
+        trashTimer = nil
+        trashOperation = nil
+        pendingTrash?.invalidate()
+        pendingTrash = nil
+    }
+
+    /// Выделить файл в Finder через AX — так же надёжно во всех видах (прототип FinderTrashProbe).
+    private func select(_ url: URL) {
+        guard let viewElement, let (items, _) = orderedItems(),
+              let item = items.first(where: { findURL($0, depth: 2) == url }) else {
+            log.error("Не нашёл в окне Finder файл, который нужно выделить")
+            return
+        }
+        let key = elements(attribute(viewElement, kAXRowsAttribute)) != nil ? kAXSelectedRowsAttribute : kAXSelectedChildrenAttribute
+        let result = AXUIElementSetAttributeValue(viewElement, key as CFString, [item] as CFArray)
+        if result != .success { log.error("Finder не дал выделить файл: \(result.rawValue)") }
     }
 
     // MARK: - Поток моста: соседи для предзагрузки
@@ -449,11 +686,27 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         runQueuedStepIfLanded()
     }
 
+    private static let deleteKey: CGKeyCode = 51
+    private static let zKey: CGKeyCode = 6
+
+    /// ⌘-сочетание напрямую процессу Finder (⌘⌫, ⌘Z) — с меткой, чтобы перехват его пропустил.
+    private func postCommand(_ keyCode: CGKeyCode) {
+        guard finderApp != nil, finderPID != 0 else { return }
+        let source = CGEventSource(stateID: .privateState)
+        for isDown in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: isDown) else { continue }
+            event.flags = .maskCommand
+            event.setIntegerValueField(.eventSourceUserData, value: KeyInterceptor.syntheticEventMarker)
+            event.postToPid(finderPID)
+        }
+    }
+
     /// Стрелка напрямую процессу Finder: ни наш перехват, ни чужие её не видят.
     /// Отдельное состояние источника — чтобы зажатые пользователем модификаторы не подмешались.
     private func post(_ key: ArrowKey) {
         guard finderApp != nil, finderPID != 0 else { return }
         sentKeys += 1
+        lastKeyPost = Date()
         let source = CGEventSource(stateID: .privateState)
         for isDown in [true, false] {
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: key.rawValue, keyDown: isDown) else { continue }

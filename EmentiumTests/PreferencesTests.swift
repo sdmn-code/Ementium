@@ -24,6 +24,7 @@ final class PreferencesTests {
         #expect(!viewer.upscaleSmallImages)
         #expect(viewer.rememberZoomPerImage)
         #expect(viewer.infoPosition == .topRight)
+        #expect(!viewer.trashEnabled)  // удаление по ⌘⌫ — только если включить
         #expect(viewer.spaceClosesViewer)
         #expect(viewer.animate)
         #expect(store.bool(forKey: Preferences.Key.interceptionEnabled))

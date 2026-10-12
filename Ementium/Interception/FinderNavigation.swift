@@ -247,3 +247,15 @@ nonisolated struct FinderNavigation: Sendable {
         }
     }
 }
+
+/// Куда перейти после удаления показанной картинки: ближайшая картинка впереди в порядке окна, иначе позади.
+/// Finder после `⌘⌫` выделяет что придётся (следующий файл, документ или ничего — зависит от вида и даже
+/// от прогона, см. `Prototypes/FinderTrashProbe`), поэтому цель Ementium выбирает сам, до удаления.
+nonisolated enum TrashTarget {
+    static func choose(
+        deleting index: Int, count: Int, url: (Int) -> URL?, isImage: (URL) -> Bool, limit: Int = .max
+    ) -> URL? {
+        PrefetchWindow.neighbors(of: index, count: count, url: url, isImage: isImage, forward: 1, backward: 0, limit: limit).first
+            ?? PrefetchWindow.neighbors(of: index, count: count, url: url, isImage: isImage, forward: 0, backward: 1, limit: limit).first
+    }
+}

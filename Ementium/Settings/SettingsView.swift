@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.spaceClosesViewer) private var spaceClosesViewer = true
     @AppStorage(Preferences.Key.animateViewer) private var animateViewer = true
     @AppStorage(Preferences.Key.infoPanelPosition) private var infoPosition = InfoPanelPosition.topRight.rawValue
+    @AppStorage(Preferences.Key.trashWithCommandDelete) private var trashEnabled = false
 
     var body: some View {
         Form {
@@ -118,6 +119,10 @@ struct SettingsView: View {
                 ForEach(InfoPanelPosition.allCases, id: \.rawValue) { position in
                     Text(position.title).tag(position.rawValue)
                 }
+            }
+            Toggle(isOn: $trashEnabled) {
+                Text("⌘⌫ перемещает в Корзину")
+                Text("Когда картинка открыта Пробелом в Finder. Вернуть — ⌘Z, пока просмотр открыт, или ⌘Z в Finder.")
             }
         }
     }

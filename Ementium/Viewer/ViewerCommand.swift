@@ -10,6 +10,10 @@ nonisolated enum ViewerCommand: Equatable {
     case zoomOut
     case zoomFit
     case openSettings
+    /// `⌘⌫` — в Корзину (только в режиме «следовать» и при включённой настройке).
+    case trash
+    /// `⌘Z` — вернуть удалённое в этом сеансе.
+    case undo
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -26,6 +30,8 @@ nonisolated enum ViewerCommand: Equatable {
         static let keypadMinus: UInt16 = 78
         static let keypadZero: UInt16 = 82
         static let comma: UInt16 = 43       // «,» (в русской раскладке «б» — та же клавиша)
+        static let delete: UInt16 = 51      // ⌫
+        static let qwertyZ: UInt16 = 6
     }
 
     /// Стрелки, Esc и Пробел распознаются по физическому коду — он одинаков во всех раскладках.
@@ -54,9 +60,18 @@ nonisolated enum ViewerCommand: Equatable {
             self = .openSettings
             return
         }
+        if flags == .command, keyCode == KeyCode.delete {
+            self = .trash
+            return
+        }
         if flags == .command {
             let character = characters?.lowercased()
             let isLatinLetter = character?.first.map { $0.isASCII && $0.isLetter } ?? false
+            // ⌘Z — так же, как ⌘Q: по символу, а в нелатинской раскладке — по физическому коду.
+            if character == "z" || (!isLatinLetter && keyCode == KeyCode.qwertyZ) {
+                self = .undo
+                return
+            }
             if character == "q" || (!isLatinLetter && keyCode == KeyCode.qwertyQ) {
                 self = .quit
                 return

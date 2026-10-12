@@ -19,6 +19,8 @@ nonisolated struct InterceptionSnapshot: Sendable, Equatable {
     var systemShortcuts: [SystemShortcut] = []
     /// Настройка «Пробел в просмотре закрывает его»; выключена — закрывает только Esc.
     var spaceClosesViewer = true
+    /// Настройка «⌘⌫ перемещает в Корзину».
+    var trashEnabled = false
 }
 
 /// Общий снимок для трёх потоков: главного, `FinderBridge` и `KeyInterceptor`.
