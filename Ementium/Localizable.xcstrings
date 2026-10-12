@@ -91,6 +91,16 @@
         }
       }
     },
+    "Copied": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировано"
+          }
+        }
+      }
+    },
     "Couldn't delete": {
       "localizations": {
         "ru": {

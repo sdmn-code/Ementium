@@ -24,6 +24,14 @@ nonisolated enum ViewerKeyAction: Equatable {
     case trash
     /// `⌘Z` — вернуть удалённое в этом сеансе.
     case undoTrash
+    /// `Home` / `End`: первая / последняя картинка в окне Finder.
+    case edge(first: Bool)
+    /// `⌘→` / `⌘←` (`⌘R` / `⌘L`): повернуть показ.
+    case rotate(clockwise: Bool)
+    /// `⌘C` — файл в буфер обмена.
+    case copy
+    /// `⌘O` — открыть в приложении по умолчанию.
+    case openInApp
 }
 
 /// Жест трекпада при открытом просмотре. Жесты масштаба macOS отдаёт активному приложению — обычно Finder,
@@ -112,6 +120,19 @@ nonisolated enum InterceptionPolicy {
             return trashEnabled && !isRepeat ? .trash : .swallow
         case .undo?:
             return trashEnabled && !isRepeat ? .undoTrash : .swallow
+        case .first?:
+            return .edge(first: true)
+        case .last?:
+            return .edge(first: false)
+        // Автоповтор — нет: зажатое сочетание крутило бы картинку каруселью.
+        case .rotateClockwise?:
+            return isRepeat ? .swallow : .rotate(clockwise: true)
+        case .rotateCounterclockwise?:
+            return isRepeat ? .swallow : .rotate(clockwise: false)
+        case .copy?:
+            return isRepeat ? .swallow : .copy
+        case .openInApp?:
+            return isRepeat ? .swallow : .openInApp
         case .quit?:
             return .quit
         case let zoom? where [.zoomIn, .zoomOut, .zoomFit].contains(zoom):

@@ -197,6 +197,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case .undoTrash:
             bridge.undoTrash()
+        case .edge(let first):
+            bridge.jumpToEdge(first: first)
+        case .rotate(let clockwise):
+            viewer.rotate(clockwise: clockwise)
+        case .copy:
+            viewer.copyCurrent()
+        case .openInApp:
+            viewer.openCurrentInApp()
         case .step, .pass, .passAndClose, .swallow:
             break
         }

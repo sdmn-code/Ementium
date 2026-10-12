@@ -128,7 +128,7 @@ struct ZoomMemoryTests {
         var memory = ZoomMemory()
         let zoom = zoomed(scale: 3, pan: CGVector(dx: 120, dy: -40))  // 200 %
         memory.remember(zoom, for: a)
-        #expect(memory.placement(for: a) == .restore(scale: 2, offset: CGPoint(x: 120, y: -40)))
+        #expect(memory.placement(for: a) == .restore(scale: 2, offset: CGPoint(x: 120, y: -40), quarterTurns: 0))
         #expect(memory.placement(for: b) == .fit)
     }
 

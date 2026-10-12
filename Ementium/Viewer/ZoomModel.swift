@@ -14,8 +14,15 @@ nonisolated struct ZoomModel: Equatable {
     static let maxScale: CGFloat = 8
     private static let epsilon: CGFloat = 0.001
 
-    /// Естественный размер картинки в пунктах.
-    private(set) var imageSize: CGSize
+    /// Естественный размер картинки в пунктах, без поворота.
+    private(set) var naturalSize: CGSize
+    /// Поворот при показе — четверти оборота по часовой (0–3). Файл не меняется.
+    private(set) var quarterTurns = 0
+
+    /// Размер картинки с учётом поворота — от него считаются «вписать», сдвиг и края.
+    var imageSize: CGSize {
+        quarterTurns.isMultiple(of: 2) ? naturalSize : CGSize(width: naturalSize.height, height: naturalSize.width)
+    }
     /// Размер области просмотра.
     private(set) var viewSize: CGSize
     /// 1 = 100 %.
@@ -28,7 +35,7 @@ nonisolated struct ZoomModel: Equatable {
     private(set) var upscalesSmallImages: Bool
 
     init(imageSize: CGSize, viewSize: CGSize, fitFraction: CGFloat = 1, upscalesSmallImages: Bool = false) {
-        self.imageSize = imageSize
+        naturalSize = imageSize
         self.viewSize = viewSize
         self.fitFraction = min(max(fitFraction, 0.1), 1)
         self.upscalesSmallImages = upscalesSmallImages
@@ -113,13 +120,22 @@ nonisolated struct ZoomModel: Equatable {
 
     /// Новая картинка — во «вписать» (свой запомненный масштаб ставит `restore`).
     mutating func replaceImage(size: CGSize) {
-        imageSize = size
+        naturalSize = size
+        quarterTurns = 0
         offset = .zero
         scale = fitScale
     }
 
-    /// Запомненные масштаб и сдвиг (вернулись к картинке) — в нынешних пределах и без ухода краёв внутрь.
-    mutating func restore(scale newScale: CGFloat, offset newOffset: CGPoint) {
+    /// Повернуть на 90° (`⌘→` / `⌘←`) — и «вписать»: прежний масштаб и сдвиг к повёрнутой картинке не подходят.
+    mutating func rotate(clockwise: Bool) {
+        quarterTurns = (quarterTurns + (clockwise ? 1 : 3)) % 4
+        scale = fitScale
+        offset = .zero
+    }
+
+    /// Запомненные масштаб, сдвиг и поворот (вернулись к картинке) — в нынешних пределах и без ухода краёв внутрь.
+    mutating func restore(scale newScale: CGFloat, offset newOffset: CGPoint, quarterTurns turns: Int = 0) {
+        quarterTurns = ((turns % 4) + 4) % 4
         scale = min(max(newScale, fitScale), maximumScale)
         offset = newOffset
         clampOffset()

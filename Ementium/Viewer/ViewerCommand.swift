@@ -14,6 +14,16 @@ nonisolated enum ViewerCommand: Equatable {
     case trash
     /// `⌘Z` — вернуть удалённое в этом сеансе.
     case undo
+    /// `Home` / `End` (на MacBook — `fn ←` / `fn →`): первая / последняя картинка.
+    case first
+    case last
+    /// `⌘→` / `⌘←` (и `⌘R` / `⌘L`, как в Просмотре): повернуть показ на 90°, файл не меняется.
+    case rotateClockwise
+    case rotateCounterclockwise
+    /// `⌘C` — файл в буфер обмена, как в Finder.
+    case copy
+    /// `⌘O` — открыть в приложении по умолчанию.
+    case openInApp
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -32,6 +42,12 @@ nonisolated enum ViewerCommand: Equatable {
         static let comma: UInt16 = 43       // «,» (в русской раскладке «б» — та же клавиша)
         static let delete: UInt16 = 51      // ⌫
         static let qwertyZ: UInt16 = 6
+        static let qwertyR: UInt16 = 15
+        static let qwertyL: UInt16 = 37
+        static let qwertyC: UInt16 = 8
+        static let qwertyO: UInt16 = 31
+        static let home: UInt16 = 115       // и fn ←
+        static let end: UInt16 = 119        // и fn →
     }
 
     /// Стрелки, Esc и Пробел распознаются по физическому коду — он одинаков во всех раскладках.
@@ -65,8 +81,21 @@ nonisolated enum ViewerCommand: Equatable {
             return
         }
         if flags == .command {
+            switch keyCode {
+            case KeyCode.right: self = .rotateClockwise; return
+            case KeyCode.left: self = .rotateCounterclockwise; return
+            default: break
+            }
             let character = characters?.lowercased()
             let isLatinLetter = character?.first.map { $0.isASCII && $0.isLetter } ?? false
+            // Буквы — по символу, в нелатинской раскладке — по физическому коду (как ⌘Q).
+            func letter(_ latin: String, _ code: UInt16) -> Bool {
+                character == latin || (!isLatinLetter && keyCode == code)
+            }
+            if letter("r", KeyCode.qwertyR) { self = .rotateClockwise; return }
+            if letter("l", KeyCode.qwertyL) { self = .rotateCounterclockwise; return }
+            if letter("c", KeyCode.qwertyC) { self = .copy; return }
+            if letter("o", KeyCode.qwertyO) { self = .openInApp; return }
             // ⌘Z — так же, как ⌘Q: по символу, а в нелатинской раскладке — по физическому коду.
             if character == "z" || (!isLatinLetter && keyCode == KeyCode.qwertyZ) {
                 self = .undo
@@ -83,6 +112,8 @@ nonisolated enum ViewerCommand: Equatable {
         case (KeyCode.right, []), (KeyCode.down, []), (KeyCode.right, [.option]), (KeyCode.down, [.option]): self = .next
         case (KeyCode.left, []), (KeyCode.up, []), (KeyCode.left, [.option]), (KeyCode.up, [.option]): self = .previous
         case (KeyCode.escape, []), (KeyCode.space, []): self = .close
+        case (KeyCode.home, []): self = .first
+        case (KeyCode.end, []): self = .last
         default: return nil
         }
     }

@@ -78,6 +78,15 @@ nonisolated struct ImageDirectory: Equatable {
         return true
     }
 
+    /// `Home` / `End`: к первому / последнему. Возвращает `false`, если уже там.
+    @discardableResult
+    mutating func moveToEdge(first: Bool) -> Bool {
+        let target = first ? 0 : images.count - 1
+        guard target != index else { return false }
+        index = target
+        return true
+    }
+
     /// Переходит к предыдущему изображению. На первом ничего не делает и возвращает `false`.
     @discardableResult
     mutating func movePrevious() -> Bool {

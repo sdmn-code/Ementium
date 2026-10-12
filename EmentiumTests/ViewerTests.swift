@@ -33,7 +33,7 @@ struct ViewerCommandTests {
         (UInt16(12), String?("q"), NSEvent.ModifierFlags()),  // Q без ⌘
         (49, " ", .shift),                           // ⇧Пробел
         (53, nil, .option),                          // ⌥Esc
-        (124, nil, .command),                        // ⌘→
+        (124, nil, NSEvent.ModifierFlags([.command, .shift])),  // ⇧⌘→ (⌘→ — поворот)
         (0, "a", NSEvent.ModifierFlags()),           // A
     ])
     func otherKeysAreIgnored(keyCode: UInt16, characters: String?, modifiers: NSEvent.ModifierFlags) {

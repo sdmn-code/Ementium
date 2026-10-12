@@ -248,6 +248,18 @@ nonisolated struct FinderNavigation: Sendable {
     }
 }
 
+/// `Home` / `End` в режиме «следовать»: первая или последняя картинка среди элементов окна Finder
+/// (документы и заголовки групп по краям пропускаются).
+nonisolated enum EdgeTarget {
+    static func find(count: Int, url: (Int) -> URL?, isImage: (URL) -> Bool, first: Bool, limit: Int = .max) -> URL? {
+        let indices: [Int] = first ? Array(0..<count) : Array((0..<count).reversed())
+        for index in indices.prefix(limit) {
+            if let file = url(index), isImage(file) { return file }
+        }
+        return nil
+    }
+}
+
 /// Куда перейти после удаления показанной картинки: ближайшая картинка впереди в порядке окна, иначе позади.
 /// Finder после `⌘⌫` выделяет что придётся (следующий файл, документ или ничего — зависит от вида и даже
 /// от прогона, см. `Prototypes/FinderTrashProbe`), поэтому цель Ementium выбирает сам, до удаления.

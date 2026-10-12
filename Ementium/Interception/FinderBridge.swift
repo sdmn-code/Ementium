@@ -172,6 +172,11 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         thread.perform { self.performTrash(url) }
     }
 
+    /// `Home` / `End` в просмотре: первая / последняя картинка в окне Finder.
+    func jumpToEdge(first: Bool) {
+        thread.perform { self.performEdge(first: first) }
+    }
+
     /// `⌘Z` в просмотре: вернуть последнюю удалённую в этом сеансе.
     func undoTrash() {
         thread.perform { self.performUndoTrash() }
@@ -398,6 +403,33 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             positions = order.map { unordered[$0] }
         }
         return (items, positions)
+    }
+
+    // MARK: - Поток моста: первая и последняя картинка
+
+    /// Найти крайнюю картинку среди элементов вида и выделить её через AX — как цель после удаления
+    /// (выделение через AX работает во всех видах, прототип FinderTrashProbe). В «значках» и «галерее»
+    /// элементы подгружены не все — тогда это крайняя из подгруженных.
+    private func performEdge(first: Bool) {
+        guard trashOperation == nil, let navigation, navigation.isSettled, isFinderReady,
+              let focused = focusedViewElement() else { return }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard let (items, _) = orderedItems(),
+              let target = EdgeTarget.find(
+                  count: items.count, url: { self.findURL(items[$0], depth: 2) },
+                  isImage: ImageDirectory.isImage, first: first, limit: Self.lookaheadLimit
+              ),
+              target != navigation.shown else { return }
+        pendingTrash?.invalidate()
+        neighborTimer?.invalidate()
+        edgeTimer?.invalidate()
+        queuedStep = nil
+        select(target)
+        self.navigation = FinderNavigation(showing: target)
+        lastNeighbors = nil
+        onShow(target)
+        scheduleNeighbors()
     }
 
     // MARK: - Поток моста: удаление в Корзину

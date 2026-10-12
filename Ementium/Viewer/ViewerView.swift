@@ -189,8 +189,8 @@ final class ViewerView: NSView {
                 fitFraction: fitFraction, upscalesSmallImages: upscalesSmallImages
             )
         }
-        if case .restore(let scale, let offset) = placement {
-            next.restore(scale: scale, offset: offset)
+        if case .restore(let scale, let offset, let turns) = placement {
+            next.restore(scale: scale, offset: offset, quarterTurns: turns)
         }
         zoom = next
         // `IOSurface` из сервиса декодирования — слой показывает его напрямую, без копирования.
@@ -252,7 +252,15 @@ final class ViewerView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(!animated)
         if animated { CATransaction.setAnimationDuration(Self.zoomAnimationDuration) }
-        imageLayer.frame = zoom?.imageRect ?? .zero
+        // Повёрнутая картинка: слою — неповёрнутый размер и поворот вокруг центра прямоугольника на экране.
+        let rect = zoom?.imageRect ?? .zero
+        let turns = zoom?.quarterTurns ?? 0
+        imageLayer.transform = CATransform3DMakeRotation(-CGFloat(turns) * .pi / 2, 0, 0, 1)
+        imageLayer.bounds = CGRect(
+            origin: .zero,
+            size: turns.isMultiple(of: 2) ? rect.size : CGSize(width: rect.height, height: rect.width)
+        )
+        imageLayer.position = CGPoint(x: rect.midX, y: rect.midY)
         CATransaction.commit()
         updateCursor()
     }
@@ -268,6 +276,13 @@ final class ViewerView: NSView {
         case .zoomFit: current.zoomToFit()
         default: return
         }
+        commit(current, animated: true)
+    }
+
+    /// `⌘→` / `⌘←`: повернуть показ на 90° — плавно, со «вписать».
+    func rotate(clockwise: Bool) {
+        guard var current = zoom else { return }
+        current.rotate(clockwise: clockwise)
         commit(current, animated: true)
     }
 
@@ -464,6 +479,9 @@ final class ViewerView: NSView {
             return super.performKeyEquivalent(with: event)
         }
         if let command = ViewerCommand(event: event) {
+            // Зажатое сочетание: поворот крутил бы каруселью, копирование и открытие — повторялись бы.
+            let once: [ViewerCommand] = [.rotateClockwise, .rotateCounterclockwise, .copy, .openInApp]
+            if event.isARepeat, once.contains(command) { return true }
             handle(command)
         }
         return true

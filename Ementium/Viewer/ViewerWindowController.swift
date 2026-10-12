@@ -368,7 +368,40 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             if preferences.trashEnabled { viewerView.showMessage(String(localized: "Deleting works when the image was opened with Space in Finder")) }
         case .undo:
             break
+        case .first, .last:
+            if isListPending { return }
+            if directory?.moveToEdge(first: command == .first) == true { loadCurrent() }
+        case .rotateClockwise, .rotateCounterclockwise:
+            rotate(clockwise: command == .rotateClockwise)
+        case .copy:
+            copyCurrent()
+        case .openInApp:
+            openCurrentInApp()
         }
+    }
+
+    // MARK: - Поворот, копирование, открытие
+
+    /// Повернуть показ (файл не меняется); поворот запомнится вместе с масштабом картинки.
+    func rotate(clockwise: Bool) {
+        guard state == .visible else { return }
+        viewerView.rotate(clockwise: clockwise)
+    }
+
+    /// `⌘C` — файл в буфер обмена, как в Finder: в Finder вставится копия файла, в мессенджеры — вложение.
+    func copyCurrent() {
+        guard state == .visible, let url = currentURL else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+        viewerView.showMessage(String(localized: "Copied"))
+    }
+
+    /// `⌘O` — закрыть просмотр и открыть файл в приложении по умолчанию.
+    func openCurrentInApp() {
+        guard state == .visible, let url = currentURL else { return }
+        close(returnFocus: false)
+        NSWorkspace.shared.open(url)
     }
 
     /// Плавное появление и исчезновение — по настройке.
