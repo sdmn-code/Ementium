@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 
 /// Затемнённый фон и изображение. Большие изображения вписываются в экран, маленькие показываются
 /// в естественном размере и не растягиваются. Масштаб — клавишами и жестами трекпада, сдвиг увеличенной
@@ -176,7 +177,7 @@ final class ViewerView: NSView {
     }
 
     /// Новая картинка: во «вписать» или с запомненными масштабом и местом этой картинки.
-    func show(_ loaded: LoadedImage, placement: ZoomPlacement) {
+    func show(_ loaded: DecodedImage, placement: ZoomPlacement) {
         let size = loaded.isVector ? Self.vectorSize(loaded.pointSize, in: bounds.size) : loaded.pointSize
         var next: ZoomModel
         if let current = zoom {
@@ -192,16 +193,17 @@ final class ViewerView: NSView {
             next.restore(scale: scale, offset: offset)
         }
         zoom = next
-        imageLayer.contents = loaded.image
+        // `IOSurface` из сервиса декодирования — слой показывает его напрямую, без копирования.
+        imageLayer.contents = loaded.surface
         messageLabel.isHidden = true
         applyZoom(animated: false)
     }
 
     /// Та же картинка в большем разрешении — подменяем пиксели, не трогая масштаб и сдвиг.
-    func upgrade(_ image: CGImage) {
+    func upgrade(_ surface: IOSurface) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        imageLayer.contents = image
+        imageLayer.contents = surface
         CATransaction.commit()
     }
 

@@ -14,7 +14,8 @@ nonisolated enum ImageMetadata {
         var typeDescription: String?
     }
 
-    /// Читает свойства без декодирования картинки — миллисекунды.
+    /// Читает свойства без декодирования картинки — миллисекунды. Обёртка для тестов; в приложении сведения
+    /// читает сервис EmentiumDecoder (`read(_:file:)`).
     @concurrent
     static func read(_ url: URL) async -> [String] {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .contentTypeKey])
@@ -24,12 +25,19 @@ nonisolated enum ImageMetadata {
             modified: values?.contentModificationDate,
             typeDescription: values?.contentType?.localizedDescription
         )
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return lines(properties: [:], file: facts) }
+        return read(data, type: values?.contentType, file: facts)
+    }
+
+    /// Строки карточки по данным файла: свойства ImageIO без декодирования картинки. Тип — подсказка
+    /// для ImageIO (без неё RAW читается как TIFF).
+    static func read(_ data: Data, type: UTType?, file: FileFacts) -> [String] {
         var properties: [String: Any] = [:]
-        if let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+        if let source = CGImageSourceCreateWithData(data as CFData, ImageLoader.sourceOptions(type) as CFDictionary),
            let copied = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] {
             properties = copied
         }
-        return lines(properties: properties, file: facts)
+        return lines(properties: properties, file: file)
     }
 
     /// Строки карточки. Нет поля — нет строки; нет EXIF вовсе (скриншот, SVG) — только файл и дата.

@@ -6,6 +6,10 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C46F35FE307D1D1800E8283C /* EmentiumDecoder.xpc in Embed XPC Services */ = {isa = PBXBuildFile; fileRef = C46F35F3307D1D1800E8283C /* EmentiumDecoder.xpc */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		C46F3580307B4A5A00E8283C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -14,11 +18,31 @@
 			remoteGlobalIDString = C46F3571307B4A5900E8283C;
 			remoteInfo = Ementium;
 		};
+		C46F35FC307D1D1800E8283C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C46F356A307B4A5900E8283C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C46F35F2307D1D1800E8283C;
+			remoteInfo = EmentiumDecoder;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C46F35FF307D1D1800E8283C /* Embed XPC Services */ = {
+			isa = PBXCopyFilesBuildPhase;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/XPCServices";
+			dstSubfolder = Product;
+			files = (
+				C46F35FE307D1D1800E8283C /* EmentiumDecoder.xpc in Embed XPC Services */,
+			);
+			name = "Embed XPC Services";
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		C46F3572307B4A5900E8283C /* Ementium.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ementium.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C46F357F307B4A5A00E8283C /* EmentiumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EmentiumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C46F35F3307D1D1800E8283C /* EmentiumDecoder.xpc */ = {isa = PBXFileReference; explicitFileType = "wrapper.xpc-service"; includeInIndex = 0; path = EmentiumDecoder.xpc; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -28,6 +52,13 @@
 				Info.plist,
 			);
 			target = C46F3571307B4A5900E8283C /* Ementium */;
+		};
+		C46F3603307D1D1800E8283C /* Exceptions for "EmentiumDecoder" folder in "EmentiumDecoder" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = C46F35F2307D1D1800E8283C /* EmentiumDecoder */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -45,6 +76,19 @@
 			path = EmentiumTests;
 			sourceTree = "<group>";
 		};
+		C46F35F4307D1D1800E8283C /* EmentiumDecoder */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C46F3603307D1D1800E8283C /* Exceptions for "EmentiumDecoder" folder in "EmentiumDecoder" target */,
+			);
+			path = EmentiumDecoder;
+			sourceTree = "<group>";
+		};
+		C46F3700307D1D1800E8283C /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,6 +102,11 @@
 			files = (
 			);
 		};
+		C46F35F0307D1D1800E8283C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -66,6 +115,8 @@
 			children = (
 				C46F3574307B4A5900E8283C /* Ementium */,
 				C46F3582307B4A5A00E8283C /* EmentiumTests */,
+				C46F35F4307D1D1800E8283C /* EmentiumDecoder */,
+				C46F3700307D1D1800E8283C /* Shared */,
 				C46F3573307B4A5900E8283C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,6 +126,7 @@
 			children = (
 				C46F3572307B4A5900E8283C /* Ementium.app */,
 				C46F357F307B4A5A00E8283C /* EmentiumTests.xctest */,
+				C46F35F3307D1D1800E8283C /* EmentiumDecoder.xpc */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -89,11 +141,16 @@
 				C46F356E307B4A5900E8283C /* Sources */,
 				C46F356F307B4A5900E8283C /* Frameworks */,
 				C46F3570307B4A5900E8283C /* Resources */,
+				C46F35FF307D1D1800E8283C /* Embed XPC Services */,
 			);
 			buildRules = (
 			);
+			dependencies = (
+				C46F35FD307D1D1800E8283C /* PBXTargetDependency */,
+			);
 			fileSystemSynchronizedGroups = (
 				C46F3574307B4A5900E8283C /* Ementium */,
+				C46F3700307D1D1800E8283C /* Shared */,
 			);
 			name = Ementium;
 			productName = Ementium;
@@ -121,6 +178,25 @@
 			productReference = C46F357F307B4A5A00E8283C /* EmentiumTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		C46F35F2307D1D1800E8283C /* EmentiumDecoder */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C46F3602307D1D1800E8283C /* Build configuration list for PBXNativeTarget "EmentiumDecoder" */;
+			buildPhases = (
+				C46F35EF307D1D1800E8283C /* Sources */,
+				C46F35F0307D1D1800E8283C /* Frameworks */,
+				C46F35F1307D1D1800E8283C /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				C46F35F4307D1D1800E8283C /* EmentiumDecoder */,
+				C46F3700307D1D1800E8283C /* Shared */,
+			);
+			name = EmentiumDecoder;
+			productName = EmentiumDecoder;
+			productReference = C46F35F3307D1D1800E8283C /* EmentiumDecoder.xpc */;
+			productType = "com.apple.product-type.xpc-service";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -137,6 +213,9 @@
 					C46F357E307B4A5A00E8283C = {
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = C46F3571307B4A5900E8283C;
+					};
+					C46F35F2307D1D1800E8283C = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -156,6 +235,7 @@
 			targets = (
 				C46F3571307B4A5900E8283C /* Ementium */,
 				C46F357E307B4A5A00E8283C /* EmentiumTests */,
+				C46F35F2307D1D1800E8283C /* EmentiumDecoder */,
 			);
 		};
 /* End PBXProject section */
@@ -167,6 +247,11 @@
 			);
 		};
 		C46F357D307B4A5A00E8283C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		C46F35F1307D1D1800E8283C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -184,6 +269,11 @@
 			files = (
 			);
 		};
+		C46F35EF307D1D1800E8283C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -191,6 +281,11 @@
 			isa = PBXTargetDependency;
 			target = C46F3571307B4A5900E8283C /* Ementium */;
 			targetProxy = C46F3580307B4A5A00E8283C /* PBXContainerItemProxy */;
+		};
+		C46F35FD307D1D1800E8283C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C46F35F2307D1D1800E8283C /* EmentiumDecoder */;
+			targetProxy = C46F35FC307D1D1800E8283C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -249,7 +344,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -307,7 +402,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -389,7 +484,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = JW5WYVU2JQ;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "io.github.sdmn-code.EmentiumTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -410,7 +505,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = JW5WYVU2JQ;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "io.github.sdmn-code.EmentiumTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -420,6 +515,58 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Ementium.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Ementium";
+			};
+			name = Release;
+		};
+		C46F3600307D1D1800E8283C /* Debug configuration for PBXNativeTarget "EmentiumDecoder" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JW5WYVU2JQ;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = EmentiumDecoder/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = EmentiumDecoder;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.github.sdmn-code.EmentiumDecoder";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		C46F3601307D1D1800E8283C /* Release configuration for PBXNativeTarget "EmentiumDecoder" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JW5WYVU2JQ;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = EmentiumDecoder/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = EmentiumDecoder;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "io.github.sdmn-code.EmentiumDecoder";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -447,6 +594,14 @@
 			buildConfigurations = (
 				C46F3595307B4A5A00E8283C /* Debug configuration for PBXNativeTarget "EmentiumTests" */,
 				C46F3596307B4A5A00E8283C /* Release configuration for PBXNativeTarget "EmentiumTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		C46F3602307D1D1800E8283C /* Build configuration list for PBXNativeTarget "EmentiumDecoder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C46F3600307D1D1800E8283C /* Debug configuration for PBXNativeTarget "EmentiumDecoder" */,
+				C46F3601307D1D1800E8283C /* Release configuration for PBXNativeTarget "EmentiumDecoder" */,
 			);
 			defaultConfigurationName = Release;
 		};

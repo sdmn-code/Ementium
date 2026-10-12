@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние проекта
 
-Remote — GitHub `sdmn-code/Ementium`. Реализованы v0.1 (оверлей, навигация, `open -a`), v0.2 (перехват Пробела в Finder, кэш Finder через AXObserver, разрешение, иконка в строке меню), v0.2.2 (листание вслед за выделением Finder), v0.3 (масштаб, жесты трекпада, RAW), v0.4 (окно настроек, автозапуск, первый запуск без разрешения) v0.5 (предзагрузка `ImageCache`, SVG, iCloud, RAW через `CIRAWFilter`, память масштаба каждой картинки, сведения о снимке по `⌥`) и v0.6 (анимация, удаление в Корзину через Finder). Мультимониторности и XPC-сервиса декодирования **ещё нет** — в README они описаны как план.
+Remote — GitHub `sdmn-code/Ementium`. Реализованы v0.1 (оверлей, навигация, `open -a`), v0.2 (перехват Пробела в Finder, кэш Finder через AXObserver, разрешение, иконка в строке меню), v0.2.2 (листание вслед за выделением Finder), v0.3 (масштаб, жесты трекпада, RAW), v0.4 (окно настроек, автозапуск, первый запуск без разрешения) v0.5 (предзагрузка `ImageCache`, SVG, iCloud, RAW через `CIRAWFilter`, память масштаба каждой картинки, сведения о снимке по `⌥`) v0.6 (анимация, удаление в Корзину через Finder); v1.0 в работе — декодирование уже в XPC-сервисе. Мультимониторности и XPC-сервиса декодирования **ещё нет** — в README они описаны как план.
 
 Перед ссылкой на любой тип из README проверяй, существует ли он. Меняешь структуру или поведение — обновляй README.
 
@@ -14,18 +14,18 @@ Ementium — agent-приложение для macOS (`LSUIElement`), подме
 
 ## Сборка
 
-Xcode 27, Swift 6.4. Обычный `Ementium.xcodeproj` (формат Xcode 27) с синхронизируемыми папками: новый файл в `Ementium/` или `EmentiumTests/` попадает в target сам, `project.pbxproj` для этого не трогать. Минимальная версия — macOS 14.
+Xcode 27, Swift 6.4. Обычный `Ementium.xcodeproj` (формат Xcode 27) с синхронизируемыми папками: новый файл в `Ementium/`, `EmentiumTests/`, `EmentiumDecoder/` или `Shared/` попадает в target сам, `project.pbxproj` для этого не трогать. `Shared/` входит и в приложение, и в сервис. Минимальная версия — macOS 27, только Apple Silicon (macOS 27 на Intel не работает — Xcode собирает только arm64).
 
 ```bash
 xcodebuild -project Ementium.xcodeproj -scheme Ementium build     # Debug
 xcodebuild -project Ementium.xcodeproj -scheme Ementium test      # Swift Testing
 xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
-  -destination 'generic/platform=macOS' build                     # Universal
+  -destination 'generic/platform=macOS' build                     # Release (arm64)
 ```
 
 **Инкрементальная сборка может врать.** После добавления варианта в перечисление (`ViewerKeyAction.zoom`) тесты на инкрементальной сборке массово падали с бессмысленными значениями (`.step` вместо `.pass`), а на чистой — проходили. Странные падения после изменения типов — сначала прогнать на чистой папке (`-derivedDataPath` в новую). `install.sh` всегда собирает с нуля.
 
-Без `-destination 'generic/platform=macOS'` xcodebuild собирает только архитектуру этого Mac, хотя `ARCHS` в проекте — `arm64 x86_64`. Проверка: `lipo -archs …/Ementium.app/Contents/MacOS/Ementium`.
+Проверка архитектуры: `lipo -archs …/Ementium.app/Contents/MacOS/Ementium` (ожидается `arm64`).
 
 Песочница и hardened runtime — build settings (`ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES`), файла `.entitlements` нет. `Info.plist` — частичный (только `CFBundleDocumentTypes`), остальное генерируется из `INFOPLIST_KEY_*`; в синхронизируемой папке он исключён из ресурсов через exception set.
 
@@ -57,7 +57,9 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
 
 **Удаление в Корзину (`⌘⌫`) — самое опасное место кода.** `⌘⌫` удаляет то, что выделено в Finder, поэтому в `FinderBridge.performTrash` все проверки — прямо перед `postCommand`: стрелки долетели (`keysSettleTime`), Finder активен, фокус тот же (`CFEqual`), выделен ровно показанный файл; в просмотре — на экране именно он (`displayedFollowedImage`); автоповтор игнорируется (`InterceptionPolicy`). На выделение, которое ставит Finder после `⌘⌫`/`⌘Z`, **не полагаться** (прототип `FinderTrashProbe`): цель выбираем сами (`TrashTarget`) и выделяем через AX. `⌘Z` — только за своё (`trashed`) и только если файла нет на месте. Ослаблять эти проверки нельзя.
 
-**Анимация** — `CGAnimateImageAtURLWithBlock`, тип — по `CGImageSourceGetType` (анимированный AVIF — `public.avis`, не `public.avif`).
+**Граница процессов: приложение не разбирает содержимое файлов.** Декодирование, кадры анимации и EXIF — только в XPC-сервисе `EmentiumDecoder` (песочница без файлов и сети, файл — дескриптором через `DecoderClient`). В коде `Ementium/` нельзя `CGImageSourceCreate…`, `CGAnimateImage…`, `CIRAWFilter`, `NSImage(contentsOf:/data:)`, `ImageLoader.load/decode`, `ImageMetadata.read` — это ловит `ProcessBoundaryTests`. `Shared/DecoderService.swift` собран и в приложении (для XPC-петли в тестах), но там не вызывается. Ответам сервиса не доверять (`DecodedImage.init?(coder:)` проверяет размеры и поверхность). Из данных ImageIO нужна подсказка типа (`ImageLoader.sourceOptions`) — без неё RAW читается как TIFF.
+
+**Анимация** — свой проигрыватель (`ImageAnimator`): кадры у сервиса, всегда по кругу (число повторов из файла не учитывать: ImageIO сообщает `LoopCount = 1` и при его отсутствии). Тип — по `CGImageSourceGetType` (анимированный AVIF — `public.avis`; у него задержки в `{AVIS}` под общими именами ключей).
 
 **Порядок листания** — всегда порядок окна Finder (следуем за его выделением). Не возвращайся к угадыванию сортировки или эвристикам по заголовку окна: это было опробовано и отвергнуто (сортировку по типу угадать не удалось; эксперимент удалён). Несколько выделенных файлов — только они, по имени.
 
@@ -67,7 +69,7 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
 
 **Декодирование — через thumbnail, не через загрузку оригинала.** `CGImageSourceCreateThumbnailAtIndex` с ограничением по размеру экрана и `kCGImageSourceCreateThumbnailWithTransform` для EXIF-ориентации. Иначе большие фото съедят память. Исключения: **RAW** — через `CIRAWFilter` со своим `CIContext` без кэша промежуточных результатов (через ImageIO тот же RAW раздувал память до 2,6 ГБ на время декодирования и оставлял ~400 МБ в системных кэшах; так — ~0,7–1,3 ГБ пик, ~40 МБ после и в 3–5 раз быстрее; встроенное превью — по-прежнему ImageIO); **SVG** — через `NSImage` (ImageIO его не рисует). Не возвращай RAW на ImageIO. `ImageCache` держит текущую и соседей (`PrefetchWindow`: 2 вперёд, 1 назад) и очищается при закрытии просмотра.
 
-**Память после просмотра (~150–300 МБ) держит не наш код**, а глобальный кэш декодированных изображений CoreGraphics (выяснено `MallocStackLogging` + `malloc_history`/`leaks --trace`). Не лечи это обходами внутри процесса — принятое решение: декодирование в XPC-сервисе (v1.0, обоснование в README, «Открытые вопросы»). Замерять память — `footprint <pid>`, а не «Мониторинг системы» сразу после закрытия: освобождённое возвращается системе с задержкой.
+**Память.** Когда декодировали в процессе, после просмотра оставалось ~150–300 МБ — глобальный кэш CoreGraphics (выяснено `MallocStackLogging` + `malloc_history`/`leaks --trace`); после выноса в сервис приложение держит ~20–40 МБ, кэши уходят вместе с процессом сервиса. Замерять — `footprint <pid>`, а не «Мониторинг системы» сразу после закрытия.
 
 **AppKit для оверлея, SwiftUI для настроек.** Окну просмотра нужен точный контроль уровня окна, фокуса и обработки клавиш — на SwiftUI это не делается. Настройки — `SettingsView` (SwiftUI, `@AppStorage`) в обычном `NSWindow` через `NSHostingController` (`SettingsWindowController`), **не** сцена `Settings`: у агентского приложения открыть её из кода на macOS 14+ можно только недокументированным вызовом. Пустая сцена `Settings` в `EmentiumApp` осталась только потому, что `App` обязан объявить сцену; пункт `⌘,` подменён.
 

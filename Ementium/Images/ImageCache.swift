@@ -8,24 +8,31 @@ import Foundation
 final class ImageCache {
     enum Update {
         /// Встроенное превью RAW — показать сразу, полная версия придёт следом.
-        case preview(LoadedImage)
+        case preview(DecodedImage)
         /// Окончательная версия под экран.
-        case final(LoadedImage)
+        case final(DecodedImage)
         /// Не открылось. Если было превью, оно уже показано и остаётся.
         case failed(Error)
     }
 
     /// Чем декодировать — подменяется в тестах.
     nonisolated struct Loader: Sendable {
-        var rawPreview: @Sendable (URL, Int) async -> LoadedImage?
-        var full: @Sendable (URL, Int) async throws -> LoadedImage
+        var rawPreview: @Sendable (URL, Int) async -> DecodedImage?
+        var full: @Sendable (URL, Int) async throws -> DecodedImage
         var ensureDownloaded: @Sendable (URL) async throws -> Void
         var needsDownload: @Sendable (URL) async -> Bool
         var modificationDate: @Sendable (URL) async -> Date?
 
+        /// Декодирует сервис EmentiumDecoder; встроенное превью — только у RAW и только если оно не крошечное
+        /// (крошечное превью хуже короткого ожидания полной версии).
         static let live = Loader(
-            rawPreview: { await ImageLoader.loadRawPreview($0, maxPixelSize: $1) },
-            full: { try await ImageLoader.load($0, maxPixelSize: $1) },
+            rawPreview: { url, size in
+                guard ImageLoader.isRaw(url),
+                      let preview = try? await DecoderClient.shared.decode(url, maxPixelSize: size, previewOnly: true),
+                      preview.decodedLongSide >= 1000 else { return nil }
+                return preview
+            },
+            full: { try await DecoderClient.shared.decode($0, maxPixelSize: $1) },
             ensureDownloaded: { try await ImageLoader.ensureDownloaded($0) },
             needsDownload: { await ImageLoader.checkNeedsDownload($0) },
             modificationDate: { await ImageLoader.modificationDate($0) }
@@ -39,8 +46,8 @@ final class ImageCache {
         var modified: Date?
         /// Предзагрузка не скачивает файлы из iCloud; текущая — скачивает.
         var isPrefetch: Bool
-        var preview: LoadedImage?
-        var final: LoadedImage?
+        var preview: DecodedImage?
+        var final: DecodedImage?
         var error: Error?
         var task: Task<Void, Never>?
         var lastUsed: UInt64 = 0
@@ -225,7 +232,7 @@ final class ImageCache {
         }
     }
 
-    private func complete(_ entry: Entry, image: LoadedImage) {
+    private func complete(_ entry: Entry, image: DecodedImage) {
         entry.final = image
         // Превью больше не нужно — не держим лишнюю картинку в памяти.
         entry.preview = nil

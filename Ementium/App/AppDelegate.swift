@@ -95,6 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         observeWorkspace()
         LoginItem.enableOnFirstLaunch()
+        DecoderClient.shared.shouldStayWarm = { [weak self] in self?.state.snapshot.isFinderFrontmost ?? false }
+        if finderIsFrontmost { DecoderClient.shared.warmUp() }
 
         // Нет доступа (первый запуск или его отозвали) — окно с объяснением вместо внезапного системного диалога.
         if !permissions.isAccessibilityGranted {
@@ -281,6 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.update { $0.isFinderFrontmost = isFinder }
         if isFinder {
             bridge.refreshSoon()
+            // Пробел вероятен — сервис декодирования поднимаем заранее, чтобы не ждать его запуска.
+            DecoderClient.shared.warmUp()
         } else if viewer.isFollowing {
             // ⌘Tab, Spotlight, клик по уведомлению: Finder больше не получает наши стрелки.
             endFollowing()

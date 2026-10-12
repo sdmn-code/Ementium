@@ -42,7 +42,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// Кадры анимированной картинки (первый кадр — из кэша, как у обычных).
     private let animator = ImageAnimator()
     /// Текущая картинка в том разрешении, в каком она показана, — от неё решаем, нужно ли больше деталей.
-    private var loaded: LoadedImage?
+    private var loaded: DecodedImage?
     /// На экране встроенное превью RAW, полная версия ещё грузится.
     private var showsPreview = false
     /// Файл, картинка которого сейчас на экране (пока грузится следующая, видна прежняя).
@@ -55,6 +55,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var infoTask: Task<Void, Never>?
     /// Уже прочитанные сведения — до закрытия просмотра (листаешь туда-обратно с `⌥`).
     private var infoCache: [URL: [String]] = [:]
+    /// Деталь, которую сервис не смог декодировать (таймаут, падение, нет памяти), — не повторять на каждое
+    /// движение пальцев, пока просмотр открыт.
+    private var detailFailed: Set<URL> = []
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
 
@@ -246,6 +249,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func present() {
+        DecoderClient.shared.viewerOpened()
         if state == .hidden {
             // Настройки могли поменять, пока просмотр был закрыт.
             preferences = ViewerPreferences()
@@ -288,6 +292,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         guard state == .visible else { return }
         if mode == .following { onFollowingEnded?() }
         state = .closing
+        // Через некоторое время сервис декодирования отпускается и завершается — с кэшами декодеров.
+        DecoderClient.shared.releaseSoon()
         interception.update {
             $0.isViewerVisible = false
             $0.isFollowingFinder = false
@@ -303,6 +309,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         run(infoHold.reset())
         infoTask?.cancel()
         infoCache.removeAll()
+        detailFailed.removeAll()
         directoryTask?.cancel()
         isNavigationBusy = false
         isDecoding = false
@@ -389,7 +396,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// пока показывая то, что есть. Без этого при 200–400 % было бы мыло.
     private func loadDetailIfNeeded(for zoom: ZoomModel) {
         // Анимация и так в исходном размере — кадры приходят из файла, деталь не нужна.
-        guard let url = currentURL, let current = loaded, !current.isAnimated, detailTask == nil else { return }
+        guard let url = currentURL, let current = loaded, !current.isAnimated, detailTask == nil,
+              !detailFailed.contains(url) else { return }
         let backingScale = panel.screen?.backingScaleFactor ?? 2
         let shownLongSide = max(zoom.imageRect.width, zoom.imageRect.height) * backingScale
         let limit = ImageLoader.fullResolutionLimit(for: current.pixelSize)
@@ -403,14 +411,17 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         isLoadingDetail = true
         updateSpinner()
         detailTask = Task {
-            let detailed = try? await ImageLoader.load(url, maxPixelSize: target)
+            let detailed = try? await DecoderClient.shared.decode(url, maxPixelSize: target)
             guard !Task.isCancelled, currentURL == url else { return }
             detailTask = nil
             isLoadingDetail = false
             updateSpinner()
-            guard let detailed else { return }
+            guard let detailed else {
+                detailFailed.insert(url)
+                return
+            }
             loaded = detailed
-            viewerView.upgrade(detailed.image)
+            viewerView.upgrade(detailed.surface)
         }
     }
 
@@ -458,14 +469,14 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                     return
                 }
                 loaded = image
-                viewerView.upgrade(image.image)
+                viewerView.upgrade(image.surface)
             } else {
                 loaded = image
                 display(image, for: url)
             }
             if image.isAnimated {
                 // Кадры подставляются без анимации CoreAnimation и без смены масштаба.
-                animator.start(url) { [weak self] frame in
+                animator.start(url, maxPixelSize: decodeSize) { [weak self] frame in
                     guard let self, state == .visible, currentURL == url else { return }
                     viewerView.upgrade(frame)
                 }
@@ -482,7 +493,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// Показать картинку `url`: сначала запомнить масштаб показанной, потом поставить новую —
     /// с её запомненным масштабом или во «вписать».
     /// Та же картинка заново (файл поменяли, пока смотрели) так сохраняет свой масштаб.
-    private func display(_ image: LoadedImage, for url: URL) {
+    private func display(_ image: DecodedImage, for url: URL) {
         rememberDisplayedZoom()
         viewerView.show(image, placement: zoomMemory.placement(for: url))
         displayedURL = url
@@ -530,10 +541,15 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             return
         }
         infoTask = Task {
-            let lines = await ImageMetadata.read(url)
+            let lines = await DecoderClient.shared.metadata(url)
             guard !Task.isCancelled, state == .visible, currentURL == url, infoHold.state == .shown else { return }
-            infoCache[url] = lines
-            viewerView.showInfo(lines)
+            if let lines {
+                infoCache[url] = lines
+                viewerView.showInfo(lines)
+            } else {
+                // Сервис не ответил — хотя бы имя файла; не кэшируем, в следующий раз спросим снова.
+                viewerView.showInfo([url.lastPathComponent])
+            }
         }
     }
 

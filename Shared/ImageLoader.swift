@@ -46,25 +46,35 @@ nonisolated enum ImageLoaderError: Error {
 }
 
 nonisolated enum ImageLoader {
-    /// Декодирует изображение не крупнее `maxPixelSize` по длинной стороне.
+    /// Декодирует файл не крупнее `maxPixelSize` по длинной стороне — обёртка над `decode(_:type:…)`
+    /// для тестов и проверки: в приложении декодирует сервис EmentiumDecoder, файл ему передаётся дескриптором.
+    @concurrent
+    static func load(_ url: URL, maxPixelSize: Int, embeddedPreviewOnly: Bool = false) async throws -> LoadedImage {
+        try Task.checkCancellation()
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { throw ImageLoaderError.noSource }
+        let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+        return try decode(data, type: type, maxPixelSize: maxPixelSize, embeddedPreviewOnly: embeddedPreviewOnly)
+    }
+
+    /// Декодирует изображение из данных файла не крупнее `maxPixelSize` по длинной стороне.
     ///
     /// Оригинал целиком в память не загружается: ImageIO сразу строит уменьшенную копию,
     /// поэтому большие фото и RAW не съедают память. Изображения меньше лимита
-    /// декодируются в исходном размере.
+    /// декодируются в исходном размере. Тип — из `UTType` файла (по нему выбирается декодер).
     /// - Parameter embeddedPreviewOnly: предпочесть встроенное в файл превью. Если превью нет, ImageIO
     ///   всё равно декодирует оригинал (проверено тестом) — тогда результат просто полноразмерный.
-    @concurrent
-    static func load(_ url: URL, maxPixelSize: Int, embeddedPreviewOnly: Bool = false) async throws -> LoadedImage {
+    static func decode(_ data: Data, type: UTType?, maxPixelSize: Int, embeddedPreviewOnly: Bool = false) throws -> LoadedImage {
         // При быстром листании большинство загрузок отменяется — не начинаем и не доделываем лишнее.
         try Task.checkCancellation()
         // SVG — тоже `public.image`, но ImageIO его не рисует: источник создаётся, а картинки нет.
-        if isVector(url) {
-            return try loadVector(url, maxPixelSize: maxPixelSize)
+        if type?.conforms(to: .svg) == true {
+            return try decodeVector(data, maxPixelSize: maxPixelSize)
         }
-        if !embeddedPreviewOnly, isRaw(url), let raw = try loadRaw(url, maxPixelSize: maxPixelSize) {
+        if !embeddedPreviewOnly, let type, type.conforms(to: .rawImage),
+           let raw = try decodeRaw(data, type: type, maxPixelSize: maxPixelSize) {
             return raw
         }
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions(type) as CFDictionary) else {
             throw ImageLoaderError.noSource
         }
         let animated = isAnimated(source)
@@ -104,9 +114,17 @@ nonisolated enum ImageLoader {
         return LoadedImage(image: image, pointSize: size, pixelSize: pixels, isAnimated: animated)
     }
 
-    /// Типы, которые ImageIO умеет анимировать (`CGAnimateImageAtURLWithBlock`). Тип — по ImageIO, а не по
-    /// расширению: анимированный AVIF — это `.avif`, но ImageIO видит его как `public.avis`. Обычный HEIC
-    /// с несколькими снимками (`public.heic`) — не анимация.
+    /// Подсказка типа обязательна, когда источник — данные, а не файл: RAW внутри — TIFF, и без неё ImageIO
+    /// берёт не то превью (у NEF — 160×120 вместо полноразмерного) или не открывает файл вовсе (ARW).
+    static func sourceOptions(_ type: UTType?) -> [CFString: Any] {
+        var options: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        if let type { options[kCGImageSourceTypeIdentifierHint] = type.identifier }
+        return options
+    }
+
+    /// Типы, которые ImageIO умеет анимировать. Тип — по ImageIO, а не по расширению: анимированный AVIF —
+    /// это `.avif`, но ImageIO видит его как `public.avis`. Обычный HEIC с несколькими снимками
+    /// (`public.heic`) — не анимация.
     static let animatableTypes: Set<String> = [
         "com.compuserve.gif", "public.png", "org.webmproject.webp", "public.heics", "public.avis",
     ]
@@ -124,8 +142,8 @@ nonisolated enum ImageLoader {
     /// Через ImageIO тот же RAW раздувал память до 2,6 ГБ на время декодирования и оставлял ~400 МБ
     /// в кэшах системы после; так — ~0,7 ГБ и ~40 МБ, и в 3–5 раз быстрее (на видеокарте).
     /// `nil` — `CIRAWFilter` файл не взял, тогда декодирует ImageIO.
-    private static func loadRaw(_ url: URL, maxPixelSize: Int) throws -> LoadedImage? {
-        guard let raw = CIRAWFilter(imageURL: url) else { return nil }
+    private static func decodeRaw(_ data: Data, type: UTType, maxPixelSize: Int) throws -> LoadedImage? {
+        guard let raw = CIRAWFilter(imageData: data, identifierHint: type.identifier) else { return nil }
         let native = raw.nativeSize
         let longSide = max(native.width, native.height)
         guard longSide > 0 else { return nil }
@@ -155,8 +173,8 @@ nonisolated enum ImageLoader {
 
     /// SVG рисует `NSImage` (как вектор) в растр, у которого длинная сторона — `maxPixelSize`.
     /// `pointSize` — собственный размер SVG; вписывание в экран — забота `ViewerView`.
-    private static func loadVector(_ url: URL, maxPixelSize: Int) throws -> LoadedImage {
-        guard let vector = NSImage(contentsOf: url), vector.size.width > 0, vector.size.height > 0 else {
+    private static func decodeVector(_ data: Data, maxPixelSize: Int) throws -> LoadedImage {
+        guard let vector = NSImage(data: data), vector.size.width > 0, vector.size.height > 0 else {
             throw ImageLoaderError.vectorUnreadable
         }
         let size = vector.size
@@ -184,6 +202,63 @@ nonisolated enum ImageLoader {
             pixelSize: CGSize(width: size.width * detail, height: size.height * detail),
             isVector: true
         )
+    }
+
+    // MARK: - Анимация
+
+    /// Анимированная картинка: источник ImageIO, число кадров и сколько раз проиграть (0 — бесконечно).
+    static func animation(_ data: Data) -> (source: CGImageSource, frameCount: Int, loopCount: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              isAnimated(source) else { return nil }
+        let container = CGImageSourceCopyProperties(source, nil) as? [String: Any] ?? [:]
+        return (source, CGImageSourceGetCount(source), loopCount(container))
+    }
+
+    /// Кадр `index` не крупнее `maxPixelSize` и сколько его показывать.
+    static func frame(_ source: CGImageSource, index: Int, maxPixelSize: Int) -> (image: CGImage, delay: Double)? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any] ?? [:]
+        return (image, frameDelay(properties))
+    }
+
+    /// Словари свойств анимации по форматам: (словарь, «настоящая» задержка, задержка, число повторов).
+    private static var animationKeys: [(String, String, String, String)] { [
+        (kCGImagePropertyGIFDictionary as String, kCGImagePropertyGIFUnclampedDelayTime as String,
+         kCGImagePropertyGIFDelayTime as String, kCGImagePropertyGIFLoopCount as String),
+        (kCGImagePropertyPNGDictionary as String, kCGImagePropertyAPNGUnclampedDelayTime as String,
+         kCGImagePropertyAPNGDelayTime as String, kCGImagePropertyAPNGLoopCount as String),
+        (kCGImagePropertyWebPDictionary as String, kCGImagePropertyWebPUnclampedDelayTime as String,
+         kCGImagePropertyWebPDelayTime as String, kCGImagePropertyWebPLoopCount as String),
+        (kCGImagePropertyHEICSDictionary as String, kCGImagePropertyHEICSUnclampedDelayTime as String,
+         kCGImagePropertyHEICSDelayTime as String, kCGImagePropertyHEICSLoopCount as String),
+        // У AVIF отдельных констант для задержки нет — ключи с теми же именами (проверено на образцах).
+        (kCGImagePropertyAVISDictionary as String, "UnclampedDelayTime", "DelayTime", "LoopCount"),
+    ] }
+
+    /// Задержка кадра; слишком короткие (0–10 мс) — 0,1 с, как в браузерах: иначе старые GIF «летят».
+    static func frameDelay(_ properties: [String: Any]) -> Double {
+        for (dictionary, unclamped, clamped, _) in animationKeys {
+            guard let values = properties[dictionary] as? [String: Any] else { continue }
+            let delay = (values[unclamped] as? Double) ?? (values[clamped] as? Double) ?? 0
+            return delay > 0.011 ? delay : 0.1
+        }
+        return 0.1
+    }
+
+    /// Сколько раз проиграть: 0 — бесконечно (так и записано в большинстве GIF).
+    static func loopCount(_ container: [String: Any]) -> Int {
+        for (dictionary, _, _, loop) in animationKeys {
+            if let values = container[dictionary] as? [String: Any], let count = values[loop] as? Int {
+                return max(0, count)
+            }
+        }
+        return 0
     }
 
     // MARK: - iCloud
@@ -272,11 +347,12 @@ nonisolated enum ImageLoader {
 
     /// Предел для декодирования в полном разрешении: не больше ~100 Мп (около 400 МБ в памяти).
     /// Возвращает длинную сторону, до которой уменьшать оригинал.
+    /// Сторона — не больше 16384: больше текстура видеокарты не берёт (панорама 30000×3000 — тоже < 100 Мп).
     static func fullResolutionLimit(for pixelSize: CGSize, maxPixels: Double = 100_000_000) -> Int {
         let longSide = max(pixelSize.width, pixelSize.height)
         let area = Double(pixelSize.width * pixelSize.height)
-        guard area > maxPixels else { return Int(longSide) }
-        return Int((Double(longSide) * (maxPixels / area).squareRoot()).rounded(.down))
+        let byArea = area > maxPixels ? Int((Double(longSide) * (maxPixels / area).squareRoot()).rounded(.down)) : Int(longSide)
+        return min(byArea, SurfaceConverter.maxSide)
     }
 
     /// DPI учитывается только у Retina-снимков. Фото с 240 или 300 dpi после экспорта или скана

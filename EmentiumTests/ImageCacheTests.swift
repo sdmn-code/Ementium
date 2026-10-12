@@ -71,15 +71,15 @@ private final class FakeLoader: Sendable {
         self.delay = delay
     }
 
-    static func image(longSide: Int, original: Int) -> LoadedImage {
+    static func image(longSide: Int, original: Int) -> DecodedImage {
         let context = CGContext(
             data: nil, width: longSide, height: 1, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
         )!
-        return LoadedImage(
+        return DecodedImage(LoadedImage(
             image: context.makeImage()!, pointSize: CGSize(width: original, height: 1),
             pixelSize: CGSize(width: original, height: 1)
-        )
+        ))!
     }
 
     var loader: ImageCache.Loader {
