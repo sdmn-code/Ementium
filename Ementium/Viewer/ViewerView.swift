@@ -122,18 +122,23 @@ final class ViewerView: NSView {
         }
     }
 
-    /// Новая картинка. `keepScale` — сохранить масштаб предыдущей (иначе «вписать»).
-    func show(_ loaded: LoadedImage, keepScale: Bool) {
+    /// Новая картинка: во «вписать» или с запомненными масштабом и местом этой картинки.
+    func show(_ loaded: LoadedImage, placement: ZoomPlacement) {
         let size = loaded.isVector ? Self.vectorSize(loaded.pointSize, in: bounds.size) : loaded.pointSize
-        if var current = zoom {
-            current.replaceImage(size: size, keepScale: keepScale)
-            zoom = current
+        var next: ZoomModel
+        if let current = zoom {
+            next = current
+            next.replaceImage(size: size)
         } else {
-            zoom = ZoomModel(
+            next = ZoomModel(
                 imageSize: size, viewSize: bounds.size,
                 fitFraction: fitFraction, upscalesSmallImages: upscalesSmallImages
             )
         }
+        if case .restore(let scale, let offset) = placement {
+            next.restore(scale: scale, offset: offset)
+        }
+        zoom = next
         imageLayer.contents = loaded.image
         messageLabel.isHidden = true
         applyZoom(animated: false)

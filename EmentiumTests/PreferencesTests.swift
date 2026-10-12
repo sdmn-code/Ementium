@@ -22,7 +22,7 @@ final class PreferencesTests {
         #expect(viewer.color == .black)
         #expect(viewer.screenFraction == 0.95)
         #expect(!viewer.upscaleSmallImages)
-        #expect(!viewer.keepZoomWhenBrowsing)
+        #expect(viewer.rememberZoomPerImage)
         #expect(viewer.spaceClosesViewer)
         #expect(viewer.animate)
         #expect(store.bool(forKey: Preferences.Key.interceptionEnabled))

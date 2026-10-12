@@ -43,6 +43,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var loaded: LoadedImage?
     /// На экране встроенное превью RAW, полная версия ещё грузится.
     private var showsPreview = false
+    /// Файл, картинка которого сейчас на экране (пока грузится следующая, видна прежняя).
+    private var displayedURL: URL?
+    /// Масштаб и место увеличенных картинок — до закрытия просмотра.
+    private var zoomMemory = ZoomMemory()
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
 
@@ -121,6 +125,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         directory = nil
         mode = .following
         followedURL = url
+        rememberDisplayedZoom()
+        displayedURL = nil
         viewerView.clear()
         present()
         loadCurrent()
@@ -176,6 +182,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         followedURL = nil
         directory = preview
         // Новый набор файлов: старая картинка не должна мелькать, пока декодируется новая.
+        rememberDisplayedZoom()
+        displayedURL = nil
         viewerView.clear()
         // Пока полный список строится, соседей ещё нет — предзагрузка начнётся, когда он будет готов.
         isListPending = true
@@ -214,6 +222,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             // Настройки могли поменять, пока просмотр был закрыт.
             preferences = ViewerPreferences()
             viewerView.apply(preferences)
+            zoomMemory.isEnabled = preferences.rememberZoomPerImage
             interception.update { $0.spaceClosesViewer = preferences.spaceClosesViewer }
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
@@ -257,6 +266,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         detailTask = nil
         loaded = nil
         showsPreview = false
+        displayedURL = nil
+        zoomMemory.forget()
         directoryTask?.cancel()
         isNavigationBusy = false
         isDecoding = false
@@ -370,10 +381,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         // `loaded` — всегда картинка текущего файла: по ней решаем, нужны ли детали при увеличении.
         loaded = nil
         showsPreview = false
-        let keepScale = preferences.keepZoomWhenBrowsing
         // Готовая (предзагруженная) картинка придёт синхронно, прямо из этого вызова.
         cache.request(url, maxPixelSize: decodeSize) { [weak self] update in
-            self?.apply(update, for: url, keepScale: keepScale)
+            self?.apply(update, for: url)
         }
         // Ничего не пришло сразу — ждём декодирования (индикатор появится, если оно затянется).
         isDecoding = loaded == nil
@@ -382,17 +392,17 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         if mode == .ownList { prefetchFromDirectory() }
     }
 
-    private func apply(_ update: ImageCache.Update, for url: URL, keepScale: Bool) {
+    private func apply(_ update: ImageCache.Update, for url: URL) {
         // Пока декодировали, пользователь мог перелистнуть дальше.
         guard state == .visible, currentURL == url else { return }
         switch update {
         case .preview(let preview):
-            // RAW: сначала встроенное превью (~10 мс), сам RAW под экран (0,4–0,6 с) — следом, подменой.
+            // RAW: сначала встроенное превью (~10 мс), сам RAW под экран — следом, подменой.
             isDecoding = false
             updateSpinner()
             loaded = preview
             showsPreview = true
-            viewerView.show(preview, keepScale: keepScale)
+            display(preview, for: url)
         case .final(let image):
             isDecoding = false
             updateSpinner()
@@ -407,14 +417,30 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 viewerView.upgrade(image.image)
             } else {
                 loaded = image
-                viewerView.show(image, keepScale: keepScale)
+                display(image, for: url)
             }
-            // Масштаб сохранился с прошлой картинки или увеличили на превью — может понадобиться больше деталей.
-            if let zoom = viewerView.zoom, keepScale || showsPreview { loadDetailIfNeeded(for: zoom) }
+            // Масштаб восстановлен из памяти или увеличили на превью —
+            // может понадобиться больше деталей (при «вписать» проверка сразу выйдет).
+            if let zoom = viewerView.zoom { loadDetailIfNeeded(for: zoom) }
         case .failed(let error):
             // Превью уже на экране — лучше оно, чем сообщение об ошибке.
             fail(url, error: error, keepShown: showsPreview)
         }
+    }
+
+    /// Показать картинку `url`: сначала запомнить масштаб показанной, потом поставить новую —
+    /// с её запомненным масштабом или во «вписать».
+    /// Та же картинка заново (файл поменяли, пока смотрели) так сохраняет свой масштаб.
+    private func display(_ image: LoadedImage, for url: URL) {
+        rememberDisplayedZoom()
+        viewerView.show(image, placement: zoomMemory.placement(for: url))
+        displayedURL = url
+    }
+
+    /// Уходим с показанной картинки: увеличенную запоминаем, во «вписать» — забываем.
+    private func rememberDisplayedZoom() {
+        guard let displayedURL, let zoom = viewerView.zoom else { return }
+        zoomMemory.remember(zoom, for: displayedURL)
     }
 
     /// Свой список: соседи известны сразу. Пока полный список строится, соседей нет — позовём ещё раз.
@@ -441,6 +467,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private) — \(details, privacy: .public)")
         guard !keepShown else { return }
         loaded = nil
+        rememberDisplayedZoom()
+        displayedURL = nil
         viewerView.showError(fileName: url.lastPathComponent)
     }
 

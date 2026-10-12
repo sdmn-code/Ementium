@@ -110,15 +110,18 @@ nonisolated struct ZoomModel: Equatable {
         clampOffset()
     }
 
-    /// Новая картинка: «вписать» или, если масштаб сохраняется при листании, тот же масштаб по центру.
-    /// Сохраняется только масштаб, выставленный вручную: «вписать» остаётся «вписать». Иначе крошечная картинка,
-    /// растянутая до экрана (тысячи процентов), передала бы следующей, большой, максимальное увеличение.
-    mutating func replaceImage(size: CGSize, keepScale: Bool) {
-        let previous = scale
-        let keeps = keepScale && !isFit
+    /// Новая картинка — во «вписать» (свой запомненный масштаб ставит `restore`).
+    mutating func replaceImage(size: CGSize) {
         imageSize = size
         offset = .zero
-        scale = keeps ? min(max(previous, fitScale), maximumScale) : fitScale
+        scale = fitScale
+    }
+
+    /// Запомненные масштаб и сдвиг (вернулись к картинке) — в нынешних пределах и без ухода краёв внутрь.
+    mutating func restore(scale newScale: CGFloat, offset newOffset: CGPoint) {
+        scale = min(max(newScale, fitScale), maximumScale)
+        offset = newOffset
+        clampOffset()
     }
 
     /// Настройки «вписать» поменялись: «вписать» остаётся «вписать», остальное — в новых пределах.

@@ -10,7 +10,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.backgroundColor) private var colorHex = "#000000"
     @AppStorage(Preferences.Key.imageScreenFraction) private var screenFraction = 0.95
     @AppStorage(Preferences.Key.upscaleSmallImages) private var upscaleSmallImages = false
-    @AppStorage(Preferences.Key.keepZoomWhenBrowsing) private var keepZoomWhenBrowsing = false
+    @AppStorage(Preferences.Key.rememberZoomPerImage) private var rememberZoomPerImage = true
     @AppStorage(Preferences.Key.spaceClosesViewer) private var spaceClosesViewer = true
     @AppStorage(Preferences.Key.animateViewer) private var animateViewer = true
 
@@ -110,7 +110,7 @@ struct SettingsView: View {
                 }
             }
             Toggle("Увеличивать маленькие картинки до размера экрана", isOn: $upscaleSmallImages)
-            Toggle("Сохранять масштаб при листании", isOn: $keepZoomWhenBrowsing)
+            Toggle("Запоминать масштаб каждой картинки", isOn: $rememberZoomPerImage)
             Toggle("Пробел закрывает просмотр", isOn: $spaceClosesViewer)
             Toggle("Плавное появление и исчезновение", isOn: $animateViewer)
         }

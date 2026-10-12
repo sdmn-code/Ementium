@@ -12,7 +12,8 @@ nonisolated enum Preferences {
         static let backgroundColor = "backgroundColor"
         static let imageScreenFraction = "imageScreenFraction"
         static let upscaleSmallImages = "upscaleSmallImages"
-        static let keepZoomWhenBrowsing = "keepZoomWhenBrowsing"
+        /// Запоминать масштаб и место каждой увеличенной картинки до закрытия просмотра.
+        static let rememberZoomPerImage = "rememberZoomPerImage"
         static let spaceClosesViewer = "spaceClosesViewer"
         static let animateViewer = "animateViewer"
     }
@@ -25,7 +26,7 @@ nonisolated enum Preferences {
         Key.backgroundColor: "#000000",
         Key.imageScreenFraction: 0.95,
         Key.upscaleSmallImages: false,
-        Key.keepZoomWhenBrowsing: false,
+        Key.rememberZoomPerImage: true,
         Key.spaceClosesViewer: true,
         Key.animateViewer: true,
     ] }
@@ -42,7 +43,7 @@ nonisolated struct ViewerPreferences: Equatable {
     /// Доля экрана для «вписать» (большие картинки).
     var screenFraction: Double
     var upscaleSmallImages: Bool
-    var keepZoomWhenBrowsing: Bool
+    var rememberZoomPerImage: Bool
     var spaceClosesViewer: Bool
     var animate: Bool
 
@@ -52,7 +53,7 @@ nonisolated struct ViewerPreferences: Equatable {
         color = RGBColor(hex: store.string(forKey: Preferences.Key.backgroundColor) ?? "") ?? .black
         screenFraction = min(max(store.double(forKey: Preferences.Key.imageScreenFraction), 0.5), 1)
         upscaleSmallImages = store.bool(forKey: Preferences.Key.upscaleSmallImages)
-        keepZoomWhenBrowsing = store.bool(forKey: Preferences.Key.keepZoomWhenBrowsing)
+        rememberZoomPerImage = store.bool(forKey: Preferences.Key.rememberZoomPerImage)
         spaceClosesViewer = store.bool(forKey: Preferences.Key.spaceClosesViewer)
         animate = store.bool(forKey: Preferences.Key.animateViewer)
     }
