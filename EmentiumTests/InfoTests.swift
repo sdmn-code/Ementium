@@ -88,7 +88,7 @@ struct InfoHoldTrackerTests {
 
 struct ImageMetadataTests {
     private let file = ImageMetadata.FileFacts(
-        name: "DSC00715.ARW", byteCount: 24_123_456, modified: nil, typeDescription: "Изображение RAW Sony"
+        name: "DSC01234.ARW", byteCount: 24_123_456, modified: nil, typeDescription: "Изображение RAW Sony"
     )
 
     private func key(_ name: CFString) -> String { name as String }
@@ -114,7 +114,7 @@ struct ImageMetadataTests {
             ],
         ]
         #expect(ImageMetadata.lines(properties: properties, file: file) == [
-            "DSC00715.ARW",
+            "DSC01234.ARW",
             "12 октября 2025, 14:32",
             "Изображение RAW Sony · 6000×4000",
             "24,1 МБ",
