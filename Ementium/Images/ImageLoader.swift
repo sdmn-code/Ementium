@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -58,6 +59,9 @@ nonisolated enum ImageLoader {
         if isVector(url) {
             return try loadVector(url, maxPixelSize: maxPixelSize)
         }
+        if !embeddedPreviewOnly, isRaw(url), let raw = try loadRaw(url, maxPixelSize: maxPixelSize) {
+            return raw
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
             throw ImageLoaderError.noSource
         }
@@ -95,6 +99,35 @@ nonisolated enum ImageLoader {
         }
 
         return LoadedImage(image: image, pointSize: size, pixelSize: pixels)
+    }
+
+    static func isRaw(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType)?.conforms(to: .rawImage) ?? false
+    }
+
+    /// RAW — через `CIRAWFilter` со своим контекстом CoreImage без кэша промежуточных результатов.
+    /// Через ImageIO тот же RAW раздувал память до 2,6 ГБ на время декодирования и оставлял ~400 МБ
+    /// в кэшах системы после; так — ~0,7 ГБ и ~40 МБ, и в 3–5 раз быстрее (на видеокарте).
+    /// `nil` — `CIRAWFilter` файл не взял, тогда декодирует ImageIO.
+    private static func loadRaw(_ url: URL, maxPixelSize: Int) throws -> LoadedImage? {
+        guard let raw = CIRAWFilter(imageURL: url) else { return nil }
+        let native = raw.nativeSize
+        let longSide = max(native.width, native.height)
+        guard longSide > 0 else { return nil }
+        let scale = min(1, Double(maxPixelSize) / longSide)
+        raw.scaleFactor = Float(scale)
+        // Поворот по EXIF фильтр применяет сам.
+        guard let image = raw.outputImage, image.extent.width > 0, image.extent.height > 0 else { return nil }
+        try Task.checkCancellation()
+        let context = CIContext(options: [.cacheIntermediates: false])
+        guard let space = CGColorSpace(name: CGColorSpace.displayP3),
+              let rendered = context.createCGImage(image, from: image.extent, format: .RGBA8, colorSpace: space) else {
+            return nil
+        }
+        try Task.checkCancellation()
+        // Размер оригинала с учётом поворота — по повёрнутому результату.
+        let size = CGSize(width: (image.extent.width / scale).rounded(), height: (image.extent.height / scale).rounded())
+        return LoadedImage(image: rendered, pointSize: size, pixelSize: size)
     }
 
     static func isVector(_ url: URL) -> Bool {
@@ -152,6 +185,20 @@ nonisolated enum ImageLoader {
             guard clock.now < deadline else { throw ImageLoaderError.notDownloaded }
             try await Task.sleep(for: .milliseconds(250))
         }
+    }
+
+    /// Дата изменения файла — вне главного потока: том может быть сетевым и подвиснуть.
+    @concurrent
+    static func modificationDate(_ url: URL) async -> Date? {
+        var fresh = url
+        fresh.removeAllCachedResourceValues()
+        return try? fresh.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+    }
+
+    /// То же, что `needsDownload`, но вне главного потока: том может быть сетевым.
+    @concurrent
+    static func checkNeedsDownload(_ url: URL) async -> Bool {
+        needsDownload(url)
     }
 
     static func needsDownload(_ url: URL) -> Bool {

@@ -18,6 +18,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.viewer.setNavigationBusy(busy) }
             }
+        },
+        onNeighbors: { [weak self] neighbors, current in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.viewer.followedNeighbors(neighbors, around: current) }
+            }
         }
     )
     private lazy var interceptor = KeyInterceptor(

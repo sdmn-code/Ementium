@@ -16,6 +16,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private let onShow: @Sendable (URL) -> Void
     /// Finder ищет следующую картинку — пропускает не-изображения (для индикатора ожидания).
     private let onBusy: @Sendable (Bool) -> Void
+    /// Соседние картинки показанной в порядке предзагрузки и сама показанная (вызывается на потоке моста).
+    private let onNeighbors: @Sendable ([URL], URL) -> Void
     private let thread = RunLoopThread(name: "Ementium.FinderBridge")
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "finder")
 
@@ -35,6 +37,13 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Счётчик отправленных стрелок — чтобы понять, сдвинулся ли Finder за время таймаута.
     private var sentKeys = 0
     private var isBusy = false
+    /// Чтение соседей для предзагрузки — после того как Finder постоял на картинке.
+    private var neighborTimer: Timer?
+    /// Последние отправленные соседи — одинаковые не шлём повторно.
+    private var lastNeighbors: (shown: URL, neighbors: [URL])?
+    /// Счётчик нажатий стрелок. Увеличивается на потоке перехвата **до** постановки шага в очередь моста,
+    /// чтобы чтение соседей, которое идёт на потоке моста, увидело нажатие и прервалось.
+    private let stepCount = OSAllocatedUnfairLock(initialState: 0)
 
     /// Без открытого просмотра ждём, пока выделение перестанет меняться (зажатая стрелка в Finder).
     private static let debounceInterval = 0.05
@@ -45,6 +54,10 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private static let edgeTimeoutPerJumpStep = 0.04
     /// Дальше не заглядываем: ~1–2 мс на элемент, а поток моста в это время занят.
     private static let lookaheadLimit = 1000
+    /// Соседей читаем, когда листание остановилось: при зажатой стрелке шаги идут чаще, и каждый отменяет чтение.
+    private static let neighborDelay = 0.15
+    /// Соседей ищем недалеко: предзагрузка — не листание, держать поток моста ради неё долго нельзя.
+    private static let neighborLimit = 50
 
     private static let notifications = [
         kAXFocusedUIElementChangedNotification,
@@ -53,10 +66,16 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         kAXFocusedWindowChangedNotification,
     ]
 
-    init(state: InterceptionState, onShow: @escaping @Sendable (URL) -> Void, onBusy: @escaping @Sendable (Bool) -> Void) {
+    init(
+        state: InterceptionState,
+        onShow: @escaping @Sendable (URL) -> Void,
+        onBusy: @escaping @Sendable (Bool) -> Void,
+        onNeighbors: @escaping @Sendable ([URL], URL) -> Void
+    ) {
         self.state = state
         self.onShow = onShow
         self.onBusy = onBusy
+        self.onNeighbors = onNeighbors
     }
 
     func start() {
@@ -80,6 +99,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.navigation = FinderNavigation(showing: url)
             self.queuedStep = nil
             self.edgeTimer?.invalidate()
+            self.lastNeighbors = nil
+            self.scheduleNeighbors()
         }
     }
 
@@ -87,6 +108,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     func stopFollowing() {
         thread.perform {
             self.queuedStep = nil
+            self.neighborTimer?.invalidate()
             self.execute(self.navigation?.finish() ?? [])
             self.forgetNavigationIfDone()
         }
@@ -94,6 +116,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     /// Пользователь нажал стрелку в просмотре (вызывается с потока перехвата).
     func step(_ key: ArrowKey) {
+        stepCount.withLock { $0 += 1 }
         thread.perform { self.performStep(key) }
     }
 
@@ -187,6 +210,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             execute(outputs)
             forgetNavigationIfDone()
             runQueuedStepIfLanded()
+            scheduleNeighbors()
         }
     }
 
@@ -194,6 +218,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     private func performStep(_ key: ArrowKey) {
         guard let current = navigation, !current.isFinishing else { return }
+        neighborTimer?.invalidate()
         // Пока пачка в полёте, Finder стоит где-то посреди документов: заглянув оттуда, мы отправили бы
         // вторую пачку и перелетели цель. Откладываем нажатие до показа картинки.
         if current.isJumping {
@@ -243,29 +268,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Finder прокрутит и подгрузит следующие (`.lookAgain`). `nil` — заглянуть нельзя (рабочий стол,
     /// группы в значках, выделенный не найден) — тогда шагаем по одному.
     private func lookahead(_ direction: ArrowKey) -> Lookahead? {
-        guard [.list, .columns, .gallery, .icons].contains(viewKind), let viewElement else { return nil }
-        var items: [AXUIElement]
-        var positions: [CGPoint?] = []
-        if let rows = elements(attribute(viewElement, kAXRowsAttribute)) {
-            items = rows
-        } else {
-            let children = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
-            // Значки и галерея: элементы лежат внутри секций (AXList). Несколько секций — группировка,
-            // у каждой своя сетка; путь между ними не прокладываем.
-            let sections = children.filter { attribute($0, kAXRoleAttribute) as? String == kAXListRole }
-            if viewKind == .icons, sections.count > 1 { return nil }
-            items = sections.isEmpty ? children : sections.flatMap { elements(attribute($0, kAXChildrenAttribute)) ?? [] }
-        }
-        if viewKind == .icons || viewKind == .gallery {
-            // Экранный порядок в AX не гарантирован — упорядочиваем по положению на экране.
-            let unordered = items.map(position)
-            let order = IconGridPath.displayOrder(of: unordered, rowMajor: viewKind == .icons)
-            items = order.map { items[$0] }
-            positions = order.map { unordered[$0] }
-        }
-        guard let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
-                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first,
-              let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
+        guard let (items, positions, start) = displayedItems() else { return nil }
 
         let step = direction.isForward ? 1 : -1
         var index = start
@@ -293,6 +296,74 @@ nonisolated final class FinderBridge: @unchecked Sendable {
                     .map { .jump(keys: $0, target: url) }
             }
         }
+    }
+
+    /// Элементы вида в экранном порядке, их положения (только для значков и галереи) и индекс выделенного.
+    /// `nil` — заглянуть нельзя (рабочий стол, группы в значках, выделенный не найден).
+    private func displayedItems() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
+        guard [.list, .columns, .gallery, .icons].contains(viewKind), let viewElement else { return nil }
+        var items: [AXUIElement]
+        var positions: [CGPoint?] = []
+        if let rows = elements(attribute(viewElement, kAXRowsAttribute)) {
+            items = rows
+        } else {
+            let children = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
+            // Значки и галерея: элементы лежат внутри секций (AXList). Несколько секций — группировка,
+            // у каждой своя сетка; путь между ними не прокладываем.
+            let sections = children.filter { attribute($0, kAXRoleAttribute) as? String == kAXListRole }
+            if viewKind == .icons, sections.count > 1 { return nil }
+            items = sections.isEmpty ? children : sections.flatMap { elements(attribute($0, kAXChildrenAttribute)) ?? [] }
+        }
+        if viewKind == .icons || viewKind == .gallery {
+            // Экранный порядок в AX не гарантирован — упорядочиваем по положению на экране.
+            let unordered = items.map(position)
+            let order = IconGridPath.displayOrder(of: unordered, rowMajor: viewKind == .icons)
+            items = order.map { items[$0] }
+            positions = order.map { unordered[$0] }
+        }
+        guard let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
+                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first,
+              let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
+        return (items, positions, start)
+    }
+
+    // MARK: - Поток моста: соседи для предзагрузки
+
+    private func scheduleNeighbors() {
+        neighborTimer?.invalidate()
+        guard navigation != nil else { return }
+        let timer = Timer(timeInterval: Self.neighborDelay, repeats: false) { [weak self] _ in
+            self?.readNeighbors()
+        }
+        RunLoop.current.add(timer, forMode: .default)
+        neighborTimer = timer
+    }
+
+    /// Finder стоит на показанной картинке и никуда не летит — читаем соседей в порядке окна.
+    /// Новое нажатие стрелки прерывает чтение: листание важнее предзагрузки.
+    private func readNeighbors() {
+        guard let navigation, navigation.isSettled, queuedStep == nil else { return }
+        let ticket = stepCount.withLock { $0 }
+        guard let (items, _, selected) = displayedItems(),
+              // Выделение в Finder могло сдвинуться, а уведомление ещё не обработано — соседи были бы не те.
+              findURL(items[selected], depth: 2) == navigation.shown else { return }
+        var interrupted = false
+        let neighbors = PrefetchWindow.neighbors(
+            of: selected, count: items.count,
+            url: { index in
+                if interrupted || self.stepCount.withLock({ $0 }) != ticket {
+                    interrupted = true
+                    return nil
+                }
+                return self.findURL(items[index], depth: 2)
+            },
+            isImage: ImageDirectory.isImage,
+            limit: Self.neighborLimit
+        )
+        guard !interrupted else { return }
+        if let last = lastNeighbors, last.shown == navigation.shown, last.neighbors == neighbors { return }
+        lastNeighbors = (navigation.shown, neighbors)
+        onNeighbors(neighbors, navigation.shown)
     }
 
     /// Клавиши до элемента `target`: в списке, колонках и галерее — `count` одинаковых стрелок,

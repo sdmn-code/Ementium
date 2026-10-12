@@ -37,9 +37,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var mode = Mode.ownList
     private var directory: ImageDirectory?
     private var followedURL: URL?
-    private var loadTask: Task<Void, Never>?
+    /// Текущая и соседние картинки, декодированные под экран.
+    private let cache = ImageCache()
     /// Текущая картинка в том разрешении, в каком она показана, — от неё решаем, нужно ли больше деталей.
     private var loaded: LoadedImage?
+    /// На экране встроенное превью RAW, полная версия ещё грузится.
+    private var showsPreview = false
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
 
@@ -53,6 +56,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// Источники ожидания для индикатора: Finder ищет следующую картинку / картинка декодируется.
     private var isNavigationBusy = false
     private var isDecoding = false
+    /// Отдельно от `isDecoding`: детали и картинка под экран завершаются независимо, и одна не должна
+    /// гасить индикатор другой.
+    private var isLoadingDetail = false
+    /// Размер декодирования под экран (длинная сторона экрана в пикселях) — фиксируется при открытии,
+    /// чтобы кэш не получал разные размеры от разных вызовов.
+    private var decodeSize = 5120
     private var spinnerDelay: Task<Void, Never>?
     /// Индикатор появляется, только если ожидание затянулось, — иначе он мигал бы при обычном листании.
     private static let spinnerDelayDuration = Duration.milliseconds(300)
@@ -131,7 +140,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func updateSpinner() {
-        guard isNavigationBusy || isDecoding else {
+        guard isNavigationBusy || isDecoding || isLoadingDetail else {
             spinnerDelay?.cancel()
             spinnerDelay = nil
             viewerView.setSpinning(false)
@@ -142,7 +151,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             try? await Task.sleep(for: Self.spinnerDelayDuration)
             guard !Task.isCancelled else { return }
             spinnerDelay = nil
-            if isNavigationBusy || isDecoding { viewerView.setSpinning(true) }
+            if isNavigationBusy || isDecoding || isLoadingDetail { viewerView.setSpinning(true) }
         }
     }
 
@@ -168,11 +177,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         directory = preview
         // Новый набор файлов: старая картинка не должна мелькать, пока декодируется новая.
         viewerView.clear()
+        // Пока полный список строится, соседей ещё нет — предзагрузка начнётся, когда он будет готов.
+        isListPending = true
+        pendingSteps = 0
         present()
         loadCurrent()
 
-        isListPending = true
-        pendingSteps = 0
         directoryTask?.cancel()
         directoryTask = Task {
             let full = await ImageDirectory.load(opening: urls)
@@ -181,6 +191,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             isListPending = false
             if let full { directory = full }
             applyPendingSteps()
+            prefetchFromDirectory()
         }
     }
 
@@ -206,6 +217,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             interception.update { $0.spaceClosesViewer = preferences.spaceClosesViewer }
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
+            decodeSize = Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
             panel.alphaValue = 0
             panel.orderFrontRegardless()
         }
@@ -240,13 +252,15 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             $0.isViewerVisible = false
             $0.isFollowingFinder = false
         }
-        loadTask?.cancel()
+        cache.clear()
         detailTask?.cancel()
         detailTask = nil
         loaded = nil
+        showsPreview = false
         directoryTask?.cancel()
         isNavigationBusy = false
         isDecoding = false
+        isLoadingDetail = false
         updateSpinner()
         isListPending = false
         pendingSteps = 0
@@ -334,13 +348,13 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         // 100 Мп на каждый SVG — это 400 МБ и заметная пауза.
         let target = current.isVector ? min(limit, Int((shownLongSide * 1.5).rounded(.up))) : limit
 
-        isDecoding = true
+        isLoadingDetail = true
         updateSpinner()
         detailTask = Task {
             let detailed = try? await ImageLoader.load(url, maxPixelSize: target)
             guard !Task.isCancelled, currentURL == url else { return }
             detailTask = nil
-            isDecoding = false
+            isLoadingDetail = false
             updateSpinner()
             guard let detailed else { return }
             loaded = detailed
@@ -350,65 +364,73 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private func loadCurrent() {
         guard let url = currentURL else { return }
-        let screen = panel.screen ?? NSScreen.main
-        let scale = screen?.backingScaleFactor ?? 2
-        let frame = screen?.frame.size ?? CGSize(width: 2560, height: 1600)
-        let maxPixelSize = Int(max(frame.width, frame.height) * scale)
-
-        loadTask?.cancel()
         detailTask?.cancel()
         detailTask = nil
-        isDecoding = true
+        isLoadingDetail = false
+        // `loaded` — всегда картинка текущего файла: по ней решаем, нужны ли детали при увеличении.
+        loaded = nil
+        showsPreview = false
+        let keepScale = preferences.keepZoomWhenBrowsing
+        // Готовая (предзагруженная) картинка придёт синхронно, прямо из этого вызова.
+        cache.request(url, maxPixelSize: decodeSize) { [weak self] update in
+            self?.apply(update, for: url, keepScale: keepScale)
+        }
+        // Ничего не пришло сразу — ждём декодирования (индикатор появится, если оно затянется).
+        isDecoding = loaded == nil
         updateSpinner()
-        loadTask = Task {
-            let keepScale = preferences.keepZoomWhenBrowsing
-            // Файл iCloud без локальной копии — сначала скачать (индикатор уже заведён).
-            do {
-                try await ImageLoader.ensureDownloaded(url)
-            } catch {
-                guard !Task.isCancelled, currentURL == url else { return }
-                fail(url, error: error, keepShown: false)
-                return
-            }
-            guard !Task.isCancelled, currentURL == url else { return }
+        log.info("Показ: \(self.loaded == nil ? "декодирование" : "из кэша", privacy: .public) (\(self.mode == .following ? "следовать" : "свой список", privacy: .public))")
+        if mode == .ownList { prefetchFromDirectory() }
+    }
+
+    private func apply(_ update: ImageCache.Update, for url: URL, keepScale: Bool) {
+        // Пока декодировали, пользователь мог перелистнуть дальше.
+        guard state == .visible, currentURL == url else { return }
+        switch update {
+        case .preview(let preview):
             // RAW: сначала встроенное превью (~10 мс), сам RAW под экран (0,4–0,6 с) — следом, подменой.
-            var showsPreview = false
-            if let preview = await ImageLoader.loadRawPreview(url, maxPixelSize: maxPixelSize) {
-                guard !Task.isCancelled, currentURL == url else { return }
-                isDecoding = false
-                updateSpinner()
-                self.loaded = preview
-                viewerView.show(preview, keepScale: keepScale)
-                showsPreview = true
-                // Превью уже не меньше нужного под экран (полноразмерное превью Nikon или RAW без превью,
-                // который ImageIO декодировал сразу) — второе декодирование ничего не добавит.
-                if preview.decodedLongSide >= min(preview.originalLongSide, maxPixelSize) { return }
-            }
-            do {
-                let loaded = try await ImageLoader.load(url, maxPixelSize: maxPixelSize)
-                // Пока декодировали, пользователь мог перелистнуть дальше.
-                guard !Task.isCancelled, currentURL == url else { return }
-                isDecoding = false
-                updateSpinner()
+            isDecoding = false
+            updateSpinner()
+            loaded = preview
+            showsPreview = true
+            viewerView.show(preview, keepScale: keepScale)
+        case .final(let image):
+            isDecoding = false
+            updateSpinner()
+            if showsPreview {
                 // Показанное не хуже нового — оставляем: пока смотрели превью, увеличение могло подгрузить
-                // оригинал, а у Nikon встроенное превью полноразмерное.
-                if showsPreview, let current = self.loaded, current.decodedLongSide >= loaded.decodedLongSide {
+                // оригинал, а у Nikon окончательная версия — то же полноразмерное превью.
+                if let current = loaded, current.decodedLongSide >= image.decodedLongSide {
+                    if let zoom = viewerView.zoom { loadDetailIfNeeded(for: zoom) }
                     return
                 }
-                self.loaded = loaded
-                if showsPreview {
-                    viewerView.upgrade(loaded.image)
-                } else {
-                    viewerView.show(loaded, keepScale: keepScale)
-                }
-                // Масштаб сохранился с прошлой картинки или увеличили на превью — может понадобиться больше деталей.
-                if let zoom = viewerView.zoom, keepScale || showsPreview { loadDetailIfNeeded(for: zoom) }
-            } catch {
-                guard !Task.isCancelled, currentURL == url else { return }
-                // Превью уже на экране — лучше оно, чем сообщение об ошибке.
-                fail(url, error: error, keepShown: showsPreview)
+                loaded = image
+                viewerView.upgrade(image.image)
+            } else {
+                loaded = image
+                viewerView.show(image, keepScale: keepScale)
             }
+            // Масштаб сохранился с прошлой картинки или увеличили на превью — может понадобиться больше деталей.
+            if let zoom = viewerView.zoom, keepScale || showsPreview { loadDetailIfNeeded(for: zoom) }
+        case .failed(let error):
+            // Превью уже на экране — лучше оно, чем сообщение об ошибке.
+            fail(url, error: error, keepShown: showsPreview)
         }
+    }
+
+    /// Свой список: соседи известны сразу. Пока полный список строится, соседей нет — позовём ещё раз.
+    private func prefetchFromDirectory() {
+        guard let directory, !isListPending else { return }
+        let images = directory.images
+        let neighbors = PrefetchWindow.neighbors(
+            of: directory.index, count: images.count, url: { images[$0] }, isImage: { _ in true }
+        )
+        cache.prefetch(neighbors, around: directory.current, maxPixelSize: decodeSize)
+    }
+
+    /// Режим «следовать»: Finder встал на `current`, мост прочитал соседей в порядке окна.
+    func followedNeighbors(_ neighbors: [URL], around current: URL) {
+        guard isFollowing, current == followedURL else { return }
+        cache.prefetch(neighbors, around: current, maxPixelSize: decodeSize)
     }
 
     private func fail(_ url: URL, error: Error, keepShown: Bool) {

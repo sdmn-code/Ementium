@@ -210,6 +210,39 @@ struct FinderNavigationTests {
     }
 
     // Прыжок пачкой: сразу N стрелок, промежуточные документы не вызывают новых шагов.
+    // Соседей для предзагрузки читаем сразу после приземления на картинку, не дожидаясь таймаута шага
+    // (ревью v0.5: иначе чтение откладывалось на 0,3 с после каждого шага).
+    @Test func settledRightAfterLandingOnAnImage() {
+        var nav = FinderNavigation(showing: url("a.jpg"))
+        #expect(nav.isSettled)
+        _ = nav.userStep(.down)
+        #expect(nav.isSettled == true)  // Finder ещё не ответил, но стоит на показанной картинке
+        _ = nav.selectionChanged(to: url("doc.pdf"), isImage: false)
+        #expect(!nav.isSettled)
+        _ = nav.selectionChanged(to: url("b.jpg"), isImage: true)
+        #expect(nav.mode == .stepping(.down))
+        #expect(nav.isSettled)
+    }
+
+    @Test func notSettledWhileJumpingReturningOrFinishing() {
+        var nav = FinderNavigation(showing: url("a.jpg"))
+        _ = nav.jump([.down, .down], direction: .down, to: url("c.jpg"))
+        #expect(!nav.isSettled)
+        _ = nav.selectionChanged(to: url("c.jpg"), isImage: true)
+        #expect(nav.isSettled)
+
+        var tail = FinderNavigation(showing: url("a.jpg"))
+        _ = tail.userStep(.down)
+        _ = tail.selectionChanged(to: url("clip.mov"), isImage: false)
+        _ = tail.timedOut()  // край после видео — возвращаемся
+        #expect(tail.mode == .returning(.up))
+        #expect(!tail.isSettled)
+
+        var closing = FinderNavigation(showing: url("a.jpg"))
+        _ = closing.finish()
+        #expect(!closing.isSettled)
+    }
+
     @Test func jumpSendsAllStepsAndIgnoresDocumentsOnTheWay() {
         var nav = FinderNavigation(showing: url("a.jpg"))
         #expect(nav.jump(Array(repeating: .down, count: 3), direction: .down, to: url("d.jpg")) == Array(repeating: .send(.down), count: 3))

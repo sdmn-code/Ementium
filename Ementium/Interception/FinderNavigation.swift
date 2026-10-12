@@ -109,6 +109,17 @@ nonisolated struct FinderNavigation: Sendable {
         return false
     }
 
+    /// Finder стоит на показанной картинке, и ничего не летит — можно читать соседей для предзагрузки.
+    /// Режим «шагаем» после приземления на картинку сохраняется до таймаута (ответы ещё могут прийти),
+    /// поэтому ждать `.idle` нельзя: соседи читались бы через 0,3 с после каждого шага.
+    var isSettled: Bool {
+        guard !isFinishing, lastObservedIsImage, lastObserved == shown else { return false }
+        switch mode {
+        case .idle, .stepping: return true
+        case .jumping, .returning: return false
+        }
+    }
+
     /// Пачка стрелок до заранее найденного элемента (заглядывание по элементам вида). Обычно цель —
     /// картинка; если картинки среди подгруженных нет — последний подгруженный элемент, и по прилёте
     /// будет `.lookAgain`. `direction` — куда продолжать, если пачка не долетит.
