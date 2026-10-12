@@ -39,6 +39,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var followedURL: URL?
     /// Текущая и соседние картинки, декодированные под экран.
     private let cache = ImageCache()
+    /// Кадры анимированной картинки (первый кадр — из кэша, как у обычных).
+    private let animator = ImageAnimator()
     /// Текущая картинка в том разрешении, в каком она показана, — от неё решаем, нужно ли больше деталей.
     private var loaded: LoadedImage?
     /// На экране встроенное превью RAW, полная версия ещё грузится.
@@ -270,6 +272,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             $0.isFollowingFinder = false
         }
         cache.clear()
+        animator.stop()
         detailTask?.cancel()
         detailTask = nil
         loaded = nil
@@ -359,7 +362,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// При увеличении сверх декодированного разрешения — декодировать оригинал в фоне (до ~100 Мп),
     /// пока показывая то, что есть. Без этого при 200–400 % было бы мыло.
     private func loadDetailIfNeeded(for zoom: ZoomModel) {
-        guard let url = currentURL, let current = loaded, detailTask == nil else { return }
+        // Анимация и так в исходном размере — кадры приходят из файла, деталь не нужна.
+        guard let url = currentURL, let current = loaded, !current.isAnimated, detailTask == nil else { return }
         let backingScale = panel.screen?.backingScaleFactor ?? 2
         let shownLongSide = max(zoom.imageRect.width, zoom.imageRect.height) * backingScale
         let limit = ImageLoader.fullResolutionLimit(for: current.pixelSize)
@@ -386,6 +390,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private func loadCurrent() {
         guard let url = currentURL else { return }
+        animator.stop()
         detailTask?.cancel()
         detailTask = nil
         isLoadingDetail = false
@@ -431,6 +436,13 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             } else {
                 loaded = image
                 display(image, for: url)
+            }
+            if image.isAnimated {
+                // Кадры подставляются без анимации CoreAnimation и без смены масштаба.
+                animator.start(url) { [weak self] frame in
+                    guard let self, state == .visible, currentURL == url else { return }
+                    viewerView.upgrade(frame)
+                }
             }
             // Масштаб восстановлен из памяти или увеличили на превью —
             // может понадобиться больше деталей (при «вписать» проверка сразу выйдет).
@@ -528,6 +540,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         let details = ImageLoader.failureDescription(url, error: error)
         log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private) — \(details, privacy: .public)")
         guard !keepShown else { return }
+        animator.stop()
         loaded = nil
         rememberDisplayedZoom()
         displayedURL = nil

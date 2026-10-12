@@ -144,6 +144,45 @@ final class ImageLoaderTests {
         #expect(ImageLoader.pixelsPerPoint(dpi: nil) == 1)
     }
 
+    // MARK: - Анимация
+
+    /// Пишет файл из `frames` кадров заданного типа ImageIO.
+    private func makeFrames(_ name: String, type: String, frames: Int) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, type as CFString, frames, nil))
+        for index in 0..<frames {
+            let context = try #require(CGContext(
+                data: nil, width: 40, height: 30, bitsPerComponent: 8, bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.setFillColor(CGColor(red: Double(index) / Double(frames), green: 0.5, blue: 0.5, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 40, height: 30))
+            CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        }
+        #expect(CGImageDestinationFinalize(destination))
+        return url
+    }
+
+    @Test(arguments: [("anim.gif", "com.compuserve.gif"), ("anim.png", "public.png"), ("anim.heics", "public.heics")])
+    func multiFrameImagesAreAnimated(name: String, type: String) async throws {
+        let url = try makeFrames(name, type: type, frames: 3)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 1000)
+        #expect(loaded.isAnimated)
+        #expect(loaded.pointSize == CGSize(width: 40, height: 30))
+    }
+
+    @Test(arguments: [("still.gif", "com.compuserve.gif"), ("still.png", "public.png")])
+    func singleFrameImagesAreStill(name: String, type: String) async throws {
+        let url = try makeFrames(name, type: type, frames: 1)
+        #expect(try await !ImageLoader.load(url, maxPixelSize: 1000).isAnimated)
+    }
+
+    // Обычный HEIC с несколькими снимками — не анимация (анимируется только последовательность HEICS).
+    @Test func multiImageHeicIsNotAnimated() async throws {
+        let url = try makeFrames("burst.heic", type: "public.heic", frames: 2)
+        #expect(try await !ImageLoader.load(url, maxPixelSize: 1000).isAnimated)
+    }
+
     // MARK: - SVG
 
     private func makeSVG(_ name: String, _ body: String) throws -> URL {

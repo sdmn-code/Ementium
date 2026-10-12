@@ -17,6 +17,8 @@ nonisolated struct LoadedImage: @unchecked Sendable {
     /// Векторная картинка (SVG): «естественного» размера у неё нет, она всегда вписывается в экран
     /// и перерисовывается чётко при увеличении.
     var isVector = false
+    /// Анимация (GIF, APNG, WebP, HEICS, AVIF): здесь — первый кадр, остальные проигрывает `ImageAnimator`.
+    var isAnimated = false
 
     /// Сколько пикселей по длинной стороне декодировано сейчас.
     var decodedLongSide: Int { max(image.width, image.height) }
@@ -65,6 +67,7 @@ nonisolated enum ImageLoader {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
             throw ImageLoaderError.noSource
         }
+        let animated = isAnimated(source)
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
         let pixelHeight = properties[kCGImagePropertyPixelHeight] as? Int ?? 0
@@ -98,7 +101,19 @@ nonisolated enum ImageLoader {
             pixels = CGSize(width: pixels.height, height: pixels.width)
         }
 
-        return LoadedImage(image: image, pointSize: size, pixelSize: pixels)
+        return LoadedImage(image: image, pointSize: size, pixelSize: pixels, isAnimated: animated)
+    }
+
+    /// Типы, которые ImageIO умеет анимировать (`CGAnimateImageAtURLWithBlock`). Тип — по ImageIO, а не по
+    /// расширению: анимированный AVIF — это `.avif`, но ImageIO видит его как `public.avis`. Обычный HEIC
+    /// с несколькими снимками (`public.heic`) — не анимация.
+    static let animatableTypes: Set<String> = [
+        "com.compuserve.gif", "public.png", "org.webmproject.webp", "public.heics", "public.avis",
+    ]
+
+    static func isAnimated(_ source: CGImageSource) -> Bool {
+        guard CGImageSourceGetCount(source) > 1, let type = CGImageSourceGetType(source) as String? else { return false }
+        return animatableTypes.contains(type)
     }
 
     static func isRaw(_ url: URL) -> Bool {
