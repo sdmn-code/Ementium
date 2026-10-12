@@ -330,11 +330,14 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         // Уже показано не хуже нужного — или лучше уже не будет.
         guard shownLongSide > CGFloat(current.decodedLongSide) * 1.05,
               current.decodedLongSide < limit else { return }
+        // Растр — сразу оригинал. Вектор перерисовываем под нужный масштаб (с запасом), а не до предела:
+        // 100 Мп на каждый SVG — это 400 МБ и заметная пауза.
+        let target = current.isVector ? min(limit, Int((shownLongSide * 1.5).rounded(.up))) : limit
 
         isDecoding = true
         updateSpinner()
         detailTask = Task {
-            let detailed = try? await ImageLoader.load(url, maxPixelSize: limit)
+            let detailed = try? await ImageLoader.load(url, maxPixelSize: target)
             guard !Task.isCancelled, currentURL == url else { return }
             detailTask = nil
             isDecoding = false
@@ -359,6 +362,15 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         updateSpinner()
         loadTask = Task {
             let keepScale = preferences.keepZoomWhenBrowsing
+            // Файл iCloud без локальной копии — сначала скачать (индикатор уже заведён).
+            do {
+                try await ImageLoader.ensureDownloaded(url)
+            } catch {
+                guard !Task.isCancelled, currentURL == url else { return }
+                fail(url, error: error, keepShown: false)
+                return
+            }
+            guard !Task.isCancelled, currentURL == url else { return }
             // RAW: сначала встроенное превью (~10 мс), сам RAW под экран (0,4–0,6 с) — следом, подменой.
             var showsPreview = false
             if let preview = await ImageLoader.loadRawPreview(url, maxPixelSize: maxPixelSize) {
@@ -393,15 +405,21 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 if let zoom = viewerView.zoom, keepScale || showsPreview { loadDetailIfNeeded(for: zoom) }
             } catch {
                 guard !Task.isCancelled, currentURL == url else { return }
-                isDecoding = false
-                updateSpinner()
-                log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private)")
                 // Превью уже на экране — лучше оно, чем сообщение об ошибке.
-                guard !showsPreview else { return }
-                self.loaded = nil
-                viewerView.showError(fileName: url.lastPathComponent)
+                fail(url, error: error, keepShown: showsPreview)
             }
         }
+    }
+
+    private func fail(_ url: URL, error: Error, keepShown: Bool) {
+        isDecoding = false
+        updateSpinner()
+        // Имя файла — скрыто настройками приватности логов, остальное — открыто: по нему и ищем причину.
+        let details = ImageLoader.failureDescription(url, error: error)
+        log.error("Не удалось декодировать \(url.lastPathComponent, privacy: .private) — \(details, privacy: .public)")
+        guard !keepShown else { return }
+        loaded = nil
+        viewerView.showError(fileName: url.lastPathComponent)
     }
 
     @objc private func applicationDidActivate(_ notification: Notification) {

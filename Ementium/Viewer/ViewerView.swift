@@ -124,12 +124,13 @@ final class ViewerView: NSView {
 
     /// Новая картинка. `keepScale` — сохранить масштаб предыдущей (иначе «вписать»).
     func show(_ loaded: LoadedImage, keepScale: Bool) {
+        let size = loaded.isVector ? Self.vectorSize(loaded.pointSize, in: bounds.size) : loaded.pointSize
         if var current = zoom {
-            current.replaceImage(size: loaded.pointSize, keepScale: keepScale)
+            current.replaceImage(size: size, keepScale: keepScale)
             zoom = current
         } else {
             zoom = ZoomModel(
-                imageSize: loaded.pointSize, viewSize: bounds.size,
+                imageSize: size, viewSize: bounds.size,
                 fitFraction: fitFraction, upscalesSmallImages: upscalesSmallImages
             )
         }
@@ -170,6 +171,15 @@ final class ViewerView: NSView {
             zoom = current
         }
         applyZoom(animated: false)
+    }
+
+    /// У вектора нет естественного размера (иконка SVG бывает 24×24): за 100 % принимаем размер,
+    /// растянутый до экрана. Тогда «вписать» — та же доля экрана, что и у больших фото, а увеличение —
+    /// обычные 200–800 % от неё.
+    nonisolated static func vectorSize(_ size: CGSize, in viewSize: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0, viewSize.width > 0, viewSize.height > 0 else { return size }
+        let ratio = min(viewSize.width / size.width, viewSize.height / size.height)
+        return CGSize(width: size.width * ratio, height: size.height * ratio)
     }
 
     /// Прямоугольник изображения при «вписать»: по центру, уменьшен до границ, но никогда не увеличен.

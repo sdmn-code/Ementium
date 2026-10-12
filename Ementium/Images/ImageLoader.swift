@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -12,6 +13,9 @@ nonisolated struct LoadedImage: @unchecked Sendable {
     /// Размер оригинала в пикселях с учётом EXIF-поворота — чтобы при увеличении понять,
     /// есть ли смысл декодировать картинку заново в большем разрешении.
     let pixelSize: CGSize
+    /// Векторная картинка (SVG): «естественного» размера у неё нет, она всегда вписывается в экран
+    /// и перерисовывается чётко при увеличении.
+    var isVector = false
 
     /// Сколько пикселей по длинной стороне декодировано сейчас.
     var decodedLongSide: Int { max(image.width, image.height) }
@@ -19,7 +23,23 @@ nonisolated struct LoadedImage: @unchecked Sendable {
 }
 
 nonisolated enum ImageLoaderError: Error {
-    case unreadable
+    /// ImageIO не открыл файл.
+    case noSource
+    /// ImageIO открыл файл, но не смог его нарисовать (так было с SVG).
+    case noImage
+    /// `NSImage` не прочитал векторную картинку.
+    case vectorUnreadable
+    /// Файл iCloud не скачался за отведённое время.
+    case notDownloaded
+
+    var stage: String {
+        switch self {
+        case .noSource: "источник ImageIO"
+        case .noImage: "декодирование ImageIO"
+        case .vectorUnreadable: "SVG"
+        case .notDownloaded: "скачивание из iCloud"
+        }
+    }
 }
 
 nonisolated enum ImageLoader {
@@ -34,8 +54,12 @@ nonisolated enum ImageLoader {
     static func load(_ url: URL, maxPixelSize: Int, embeddedPreviewOnly: Bool = false) async throws -> LoadedImage {
         // При быстром листании большинство загрузок отменяется — не начинаем и не доделываем лишнее.
         try Task.checkCancellation()
+        // SVG — тоже `public.image`, но ImageIO его не рисует: источник создаётся, а картинки нет.
+        if isVector(url) {
+            return try loadVector(url, maxPixelSize: maxPixelSize)
+        }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            throw ImageLoaderError.unreadable
+            throw ImageLoaderError.noSource
         }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         let pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int ?? 0
@@ -53,7 +77,7 @@ nonisolated enum ImageLoader {
             options[kCGImageSourceCreateThumbnailFromImageAlways] = true
         }
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-            throw ImageLoaderError.unreadable
+            throw ImageLoaderError.noImage
         }
         try Task.checkCancellation()
 
@@ -71,6 +95,105 @@ nonisolated enum ImageLoader {
         }
 
         return LoadedImage(image: image, pointSize: size, pixelSize: pixels)
+    }
+
+    static func isVector(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType)?.conforms(to: .svg) ?? false
+    }
+
+    /// Во сколько раз векторную картинку можно увеличить относительно «вписать» без потери чёткости —
+    /// столько же, сколько допускает масштаб (800 %).
+    static let vectorDetailFactor: Double = 8
+
+    /// SVG рисует `NSImage` (как вектор) в растр, у которого длинная сторона — `maxPixelSize`.
+    /// `pointSize` — собственный размер SVG; вписывание в экран — забота `ViewerView`.
+    private static func loadVector(_ url: URL, maxPixelSize: Int) throws -> LoadedImage {
+        guard let vector = NSImage(contentsOf: url), vector.size.width > 0, vector.size.height > 0 else {
+            throw ImageLoaderError.vectorUnreadable
+        }
+        let size = vector.size
+        let ratio = Double(maxPixelSize) / max(size.width, size.height)
+        let width = max(1, Int((size.width * ratio).rounded()))
+        let height = max(1, Int((size.height * ratio).rounded()))
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { throw ImageLoaderError.vectorUnreadable }
+        try Task.checkCancellation()
+        // `NSGraphicsContext.current` — свой у каждого потока, рисовать в фоне можно.
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        vector.draw(in: CGRect(x: 0, y: 0, width: width, height: height), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let image = context.makeImage() else { throw ImageLoaderError.vectorUnreadable }
+        try Task.checkCancellation()
+
+        // «Оригинал» вектора — сколько угодно пикселей; ограничиваем пределом увеличения.
+        let detail = Double(maxPixelSize) * vectorDetailFactor / max(size.width, size.height)
+        return LoadedImage(
+            image: image, pointSize: size,
+            pixelSize: CGSize(width: size.width * detail, height: size.height * detail),
+            isVector: true
+        )
+    }
+
+    // MARK: - iCloud
+
+    /// Файл iCloud без локальной копии: запросить скачивание и дождаться его (как делает Quick Look).
+    /// Обычный файл — сразу. Отмена задачи прерывает ожидание.
+    @concurrent
+    static func ensureDownloaded(_ url: URL, timeout: Duration = .seconds(60)) async throws {
+        guard needsDownload(url) else { return }
+        try? FileManager.default.startDownloadingUbiquitousItem(at: url)
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while needsDownload(url) {
+            guard clock.now < deadline else { throw ImageLoaderError.notDownloaded }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    static func needsDownload(_ url: URL) -> Bool {
+        var fresh = url
+        // Значения ресурсов кэшируются в самом URL — без сброса статус никогда не обновится.
+        fresh.removeAllCachedResourceValues()
+        guard let values = try? fresh.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
+              values.isUbiquitousItem == true else { return false }
+        return values.ubiquitousItemDownloadingStatus != .current
+    }
+
+    // MARK: - Диагностика
+
+    /// Что известно о файле, который не открылся, — без имени и пути (их пишем в лог отдельно, скрытыми).
+    static func failureDescription(_ url: URL, error: Error) -> String {
+        let keys: Set<URLResourceKey> = [
+            .contentTypeKey, .fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey, .volumeIsLocalKey,
+        ]
+        let values = try? url.resourceValues(forKeys: keys)
+        return failureDescription(
+            fileExtension: url.pathExtension,
+            typeIdentifier: values?.contentType?.identifier,
+            fileSize: values?.fileSize,
+            stage: (error as? ImageLoaderError)?.stage ?? String(describing: error),
+            iCloudStatus: values?.isUbiquitousItem == true ? values?.ubiquitousItemDownloadingStatus?.rawValue : nil,
+            isLocalVolume: values?.volumeIsLocal
+        )
+    }
+
+    static func failureDescription(
+        fileExtension: String, typeIdentifier: String?, fileSize: Int?, stage: String,
+        iCloudStatus: String?, isLocalVolume: Bool?
+    ) -> String {
+        var parts = [
+            "расширение: \(fileExtension.isEmpty ? "нет" : fileExtension.lowercased())",
+            "тип: \(typeIdentifier ?? "неизвестен")",
+            "размер: \(fileSize.map { "\($0) байт" } ?? "неизвестен")",
+            "шаг: \(stage)",
+        ]
+        if let iCloudStatus { parts.append("iCloud: \(iCloudStatus)") }
+        if isLocalVolume == false { parts.append("сетевой том") }
+        return parts.joined(separator: ", ")
     }
 
     /// Встроенное превью RAW-файла — чтобы показать снимок сразу, пока сам RAW декодируется в фоне

@@ -143,4 +143,74 @@ final class ImageLoaderTests {
     @Test func missingDpiMeansOnePixelPerPoint() {
         #expect(ImageLoader.pixelsPerPoint(dpi: nil) == 1)
     }
+
+    // MARK: - SVG
+
+    private func makeSVG(_ name: String, _ body: String) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        try body.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    // ImageIO SVG не рисует (из-за этого и было «Не удалось открыть») — рисует NSImage.
+    @Test func svgIsRenderedAsVectorToTheRequestedSize() async throws {
+        let url = try makeSVG("wide.svg", """
+            <svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><rect width="200" height="100" fill="#3a7"/></svg>
+            """)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 1000)
+        #expect(loaded.isVector)
+        #expect(loaded.pointSize == CGSize(width: 200, height: 100))
+        #expect(loaded.image.width == 1000)
+        #expect(loaded.image.height == 500)
+        // Увеличивать можно до 800 % от размера под экран.
+        #expect(loaded.originalLongSide == 8000)
+    }
+
+    @Test func svgWithOnlyViewBoxKeepsProportions() async throws {
+        let url = try makeSVG("icon.svg", """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 48"><path d="M0 0h24v48H0z" fill="red"/></svg>
+            """)
+        let loaded = try await ImageLoader.load(url, maxPixelSize: 960)
+        #expect(loaded.pointSize == CGSize(width: 24, height: 48))
+        #expect(loaded.image.width == 480)
+        #expect(loaded.image.height == 960)
+    }
+
+    @Test func brokenSvgThrows() async throws {
+        let url = try makeSVG("broken.svg", "not an svg")
+        await #expect(throws: ImageLoaderError.self) {
+            try await ImageLoader.load(url, maxPixelSize: 1000)
+        }
+    }
+
+    @Test func rasterImagesAreNotVectors() async throws {
+        let url = try makeImage("raster.png", width: 20, height: 10, type: .png)
+        #expect(!ImageLoader.isVector(url))
+        #expect(try await !ImageLoader.load(url, maxPixelSize: 100).isVector)
+    }
+
+    // MARK: - iCloud и диагностика
+
+    @Test func localFileNeedsNoDownload() async throws {
+        let url = try makeImage("local.jpg", width: 10, height: 10)
+        #expect(!ImageLoader.needsDownload(url))
+        try await ImageLoader.ensureDownloaded(url)
+    }
+
+    @Test func failureDescriptionHasNoFileName() {
+        let text = ImageLoader.failureDescription(
+            fileExtension: "SVG", typeIdentifier: "public.svg-image", fileSize: 1234, stage: "SVG",
+            iCloudStatus: "NSURLUbiquitousItemDownloadingStatusNotDownloaded", isLocalVolume: false
+        )
+        #expect(text == "расширение: svg, тип: public.svg-image, размер: 1234 байт, шаг: SVG, "
+            + "iCloud: NSURLUbiquitousItemDownloadingStatusNotDownloaded, сетевой том")
+    }
+
+    @Test func failureDescriptionOfFileWithoutDetails() {
+        let text = ImageLoader.failureDescription(
+            fileExtension: "", typeIdentifier: nil, fileSize: nil, stage: "источник ImageIO",
+            iCloudStatus: nil, isLocalVolume: true
+        )
+        #expect(text == "расширение: нет, тип: неизвестен, размер: неизвестен, шаг: источник ImageIO")
+    }
 }

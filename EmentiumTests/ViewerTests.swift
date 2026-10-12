@@ -96,4 +96,17 @@ struct FittedRectTests {
     @Test func emptySizeGivesEmptyRect() {
         #expect(ViewerView.fittedRect(imageSize: .zero, in: screen) == .zero)
     }
+
+    // SVG-иконка 24×24 вписывается в экран, как в Quick Look, — при любой настройке «Увеличивать маленькие».
+    @Test func vectorIsScaledToTheScreen() {
+        let size = ViewerView.vectorSize(CGSize(width: 24, height: 24), in: screen.size)
+        #expect(size == CGSize(width: 900, height: 900))
+        let zoom = ZoomModel(imageSize: size, viewSize: screen.size, fitFraction: 0.95)
+        #expect(zoom.imageRect.height == 855)
+        #expect(zoom.isFit)
+    }
+
+    @Test func wideVectorIsScaledByWidth() {
+        #expect(ViewerView.vectorSize(CGSize(width: 2880, height: 900), in: screen.size) == CGSize(width: 1440, height: 450))
+    }
 }
