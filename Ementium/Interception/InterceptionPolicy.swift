@@ -83,7 +83,9 @@ nonisolated enum InterceptionPolicy {
         if keyCode == KeyCode.space, !modifiers.isEmpty {
             return .passAndClose
         }
-        if modifiers.isEmpty, let arrow = ArrowKey(rawValue: keyCode) {
+        // С `⌥` — тоже шаг: держишь `⌥` (сведения о снимке) и листаешь. Finder получит обычную стрелку,
+        // а не ⌥→ (та раскрыла бы папки в «Списке»): мост шлёт стрелки без модификаторов.
+        if modifiers.isEmpty || modifiers == .maskAlternate, let arrow = ArrowKey(rawValue: keyCode) {
             return .step(arrow)
         }
         // F-клавиши — Mission Control, Launchpad, рабочий стол и т. п.

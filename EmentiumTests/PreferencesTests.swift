@@ -23,6 +23,7 @@ final class PreferencesTests {
         #expect(viewer.screenFraction == 0.95)
         #expect(!viewer.upscaleSmallImages)
         #expect(viewer.rememberZoomPerImage)
+        #expect(viewer.infoPosition == .topRight)
         #expect(viewer.spaceClosesViewer)
         #expect(viewer.animate)
         #expect(store.bool(forKey: Preferences.Key.interceptionEnabled))
@@ -39,6 +40,13 @@ final class PreferencesTests {
         #expect(viewer.color == RGBColor(hex: "#336699"))
         #expect(viewer.screenFraction == 0.5)
         #expect(!viewer.spaceClosesViewer)
+    }
+
+    @Test func unknownInfoPositionFallsBackToTopRight() {
+        store.set("middle", forKey: Preferences.Key.infoPanelPosition)
+        #expect(ViewerPreferences(from: store).infoPosition == .topRight)
+        store.set("bottomLeft", forKey: Preferences.Key.infoPanelPosition)
+        #expect(ViewerPreferences(from: store).infoPosition == .bottomLeft)
     }
 
     @Test func brokenColorFallsBackToBlack() {

@@ -43,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.viewer.gesture(gesture) }
             }
+        },
+        onViewerInput: { [weak self] input in
+            // Главная очередь сохраняет порядок: «⌥ нажат» не обгонит «⌥ отпущен».
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.viewer.input(input) }
+            }
         }
     )
     private var statusMenu: StatusMenuController?

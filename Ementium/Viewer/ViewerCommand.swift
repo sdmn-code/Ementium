@@ -64,8 +64,9 @@ nonisolated enum ViewerCommand: Equatable {
             return nil
         }
         switch (keyCode, flags) {
-        case (KeyCode.right, []), (KeyCode.down, []): self = .next
-        case (KeyCode.left, []), (KeyCode.up, []): self = .previous
+        // С `⌥` — тоже: держишь `⌥` (сведения о снимке) и листаешь.
+        case (KeyCode.right, []), (KeyCode.down, []), (KeyCode.right, [.option]), (KeyCode.down, [.option]): self = .next
+        case (KeyCode.left, []), (KeyCode.up, []), (KeyCode.left, [.option]), (KeyCode.up, [.option]): self = .previous
         case (KeyCode.escape, []), (KeyCode.space, []): self = .close
         default: return nil
         }

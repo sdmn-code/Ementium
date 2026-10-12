@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(Preferences.Key.rememberZoomPerImage) private var rememberZoomPerImage = true
     @AppStorage(Preferences.Key.spaceClosesViewer) private var spaceClosesViewer = true
     @AppStorage(Preferences.Key.animateViewer) private var animateViewer = true
+    @AppStorage(Preferences.Key.infoPanelPosition) private var infoPosition = InfoPanelPosition.topRight.rawValue
 
     var body: some View {
         Form {
@@ -113,6 +114,11 @@ struct SettingsView: View {
             Toggle("Запоминать масштаб каждой картинки", isOn: $rememberZoomPerImage)
             Toggle("Пробел закрывает просмотр", isOn: $spaceClosesViewer)
             Toggle("Плавное появление и исчезновение", isOn: $animateViewer)
+            Picker("Сведения о снимке (удерживайте ⌥)", selection: $infoPosition) {
+                ForEach(InfoPanelPosition.allCases, id: \.rawValue) { position in
+                    Text(position.title).tag(position.rawValue)
+                }
+            }
         }
     }
 

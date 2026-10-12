@@ -16,6 +16,8 @@ nonisolated enum Preferences {
         static let rememberZoomPerImage = "rememberZoomPerImage"
         static let spaceClosesViewer = "spaceClosesViewer"
         static let animateViewer = "animateViewer"
+        /// Угол карточки сведений о снимке (по `⌥`).
+        static let infoPanelPosition = "infoPanelPosition"
     }
 
     static var defaults: [String: Any] { [
@@ -29,6 +31,7 @@ nonisolated enum Preferences {
         Key.rememberZoomPerImage: true,
         Key.spaceClosesViewer: true,
         Key.animateViewer: true,
+        Key.infoPanelPosition: InfoPanelPosition.topRight.rawValue,
     ] }
 
     static func register(in store: UserDefaults = .standard) {
@@ -46,6 +49,7 @@ nonisolated struct ViewerPreferences: Equatable {
     var rememberZoomPerImage: Bool
     var spaceClosesViewer: Bool
     var animate: Bool
+    var infoPosition: InfoPanelPosition
 
     init(from store: UserDefaults = .standard) {
         Preferences.register(in: store)
@@ -56,6 +60,24 @@ nonisolated struct ViewerPreferences: Equatable {
         rememberZoomPerImage = store.bool(forKey: Preferences.Key.rememberZoomPerImage)
         spaceClosesViewer = store.bool(forKey: Preferences.Key.spaceClosesViewer)
         animate = store.bool(forKey: Preferences.Key.animateViewer)
+        infoPosition = store.string(forKey: Preferences.Key.infoPanelPosition).flatMap(InfoPanelPosition.init) ?? .topRight
+    }
+}
+
+/// Угол экрана для карточки сведений о снимке.
+nonisolated enum InfoPanelPosition: String, CaseIterable, Equatable {
+    case topRight
+    case topLeft
+    case bottomLeft
+    case bottomRight
+
+    var title: String {
+        switch self {
+        case .topRight: "Справа вверху"
+        case .topLeft: "Слева вверху"
+        case .bottomLeft: "Слева внизу"
+        case .bottomRight: "Справа внизу"
+        }
     }
 }
 

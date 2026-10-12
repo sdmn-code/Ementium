@@ -47,6 +47,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var displayedURL: URL?
     /// Масштаб и место увеличенных картинок — до закрытия просмотра.
     private var zoomMemory = ZoomMemory()
+    /// Сведения о снимке по удержанию `⌥`.
+    private var infoHold = InfoHoldTracker()
+    private var infoTimer: Task<Void, Never>?
+    private var infoTask: Task<Void, Never>?
+    /// Уже прочитанные сведения — до закрытия просмотра (листаешь туда-обратно с `⌥`).
+    private var infoCache: [URL: [String]] = [:]
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
 
@@ -106,6 +112,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         panel.animationBehavior = .none
 
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
+        viewerView.onModifiersChanged = { [weak self] modifiers in self?.input(.modifiers(modifiers)) }
+        viewerView.onKeyPressed = { [weak self] isArrow in self?.input(.keyPressed(isArrow: isArrow)) }
         viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
 
         // `open -a` активирует Ementium, поэтому запоминаем, кто был активен до него,
@@ -268,6 +276,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         showsPreview = false
         displayedURL = nil
         zoomMemory.forget()
+        run(infoHold.reset())
+        infoTask?.cancel()
+        infoCache.removeAll()
         directoryTask?.cancel()
         isNavigationBusy = false
         isDecoding = false
@@ -388,6 +399,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         // Ничего не пришло сразу — ждём декодирования (индикатор появится, если оно затянется).
         isDecoding = loaded == nil
         updateSpinner()
+        // Держишь `⌥` и листаешь — сведения следуют за картинкой.
+        if infoHold.state == .shown { updateInfo() }
         log.info("Показ: \(self.loaded == nil ? "декодирование" : "из кэша", privacy: .public) (\(self.mode == .following ? "следовать" : "свой список", privacy: .public))")
         if mode == .ownList { prefetchFromDirectory() }
     }
@@ -435,6 +448,55 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         rememberDisplayedZoom()
         viewerView.show(image, placement: zoomMemory.placement(for: url))
         displayedURL = url
+    }
+
+    // MARK: - Сведения о снимке
+
+    /// Модификаторы и нажатия: в режиме «свой список» — от панели, в режиме «следовать» — от перехвата.
+    func input(_ input: ViewerInput) {
+        guard state == .visible else { return }
+        switch input {
+        case .modifiers(let modifiers): run(infoHold.modifiersChanged(modifiers))
+        case .keyPressed(let isArrow): run(infoHold.keyPressed(isArrow: isArrow))
+        }
+    }
+
+    private func run(_ outputs: [InfoHoldTracker.Output]) {
+        for output in outputs {
+            switch output {
+            case .startTimer:
+                infoTimer?.cancel()
+                infoTimer = Task {
+                    try? await Task.sleep(for: InfoHoldTracker.delay)
+                    guard !Task.isCancelled else { return }
+                    run(infoHold.timerFired())
+                }
+            case .cancelTimer:
+                infoTimer?.cancel()
+                infoTimer = nil
+            case .show:
+                updateInfo()
+            case .hide:
+                infoTask?.cancel()
+                viewerView.hideInfo()
+            }
+        }
+    }
+
+    /// Сведения о текущей картинке: из памяти сразу, иначе — прочитать (без декодирования, миллисекунды).
+    private func updateInfo() {
+        guard let url = currentURL else { return }
+        infoTask?.cancel()
+        if let lines = infoCache[url] {
+            viewerView.showInfo(lines)
+            return
+        }
+        infoTask = Task {
+            let lines = await ImageMetadata.read(url)
+            guard !Task.isCancelled, state == .visible, currentURL == url, infoHold.state == .shown else { return }
+            infoCache[url] = lines
+            viewerView.showInfo(lines)
+        }
     }
 
     /// Уходим с показанной картинки: увеличенную запоминаем, во «вписать» — забываем.

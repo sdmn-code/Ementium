@@ -7,6 +7,9 @@ final class ViewerView: NSView {
     var onCommand: ((ViewerCommand) -> Void)?
     /// Масштаб изменился — контроллер решает, не пора ли декодировать картинку в большем разрешении.
     var onZoomChanged: ((ZoomModel) -> Void)?
+    /// Режим «свой список»: модификаторы и нажатия — для сведений о снимке по `⌥`.
+    var onModifiersChanged: ((HoldModifiers) -> Void)?
+    var onKeyPressed: ((_ isArrow: Bool) -> Void)?
 
     private let imageLayer = CALayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
@@ -17,6 +20,12 @@ final class ViewerView: NSView {
     private let zoomBadge = NSView()
     private let zoomLabel = NSTextField(labelWithString: "")
     private var zoomBadgeHide: Task<Void, Never>?
+    /// Сведения о снимке — карточка в углу, пока удерживается `⌥`.
+    private let infoPanel = NSVisualEffectView()
+    private let infoLabel = NSTextField(wrappingLabelWithString: "")
+    private var infoConstraints: [InfoPanelPosition: [NSLayoutConstraint]] = [:]
+    private var infoPosition = InfoPanelPosition.topRight
+    private var animatesInfo = true
 
     private(set) var zoom: ZoomModel?
     private var isDragging = false
@@ -89,6 +98,44 @@ final class ViewerView: NSView {
             zoomLabel.topAnchor.constraint(equalTo: zoomBadge.topAnchor, constant: 7),
             zoomLabel.bottomAnchor.constraint(equalTo: zoomBadge.bottomAnchor, constant: -7),
         ])
+
+        setUpInfoPanel()
+    }
+
+    private func setUpInfoPanel() {
+        infoPanel.material = .hudWindow
+        infoPanel.blendingMode = .withinWindow
+        infoPanel.state = .active
+        infoPanel.wantsLayer = true
+        infoPanel.layer?.cornerRadius = 12
+        infoPanel.layer?.masksToBounds = true
+        infoPanel.alphaValue = 0
+        infoPanel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(infoPanel)
+        infoLabel.textColor = .white
+        infoLabel.maximumNumberOfLines = 0
+        infoLabel.preferredMaxLayoutWidth = 320
+        infoLabel.translatesAutoresizingMaskIntoConstraints = false
+        infoPanel.addSubview(infoLabel)
+        NSLayoutConstraint.activate([
+            infoLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 16),
+            infoLabel.trailingAnchor.constraint(equalTo: infoPanel.trailingAnchor, constant: -16),
+            infoLabel.topAnchor.constraint(equalTo: infoPanel.topAnchor, constant: 12),
+            infoLabel.bottomAnchor.constraint(equalTo: infoPanel.bottomAnchor, constant: -12),
+            infoPanel.widthAnchor.constraint(lessThanOrEqualToConstant: 352),
+        ])
+        let margin: CGFloat = 24
+        infoConstraints = [
+            .topRight: [infoPanel.topAnchor.constraint(equalTo: topAnchor, constant: margin),
+                        infoPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -margin)],
+            .topLeft: [infoPanel.topAnchor.constraint(equalTo: topAnchor, constant: margin),
+                       infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin)],
+            .bottomLeft: [infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -margin),
+                          infoPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: margin)],
+            .bottomRight: [infoPanel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -margin),
+                           infoPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -margin)],
+        ]
+        NSLayoutConstraint.activate(infoConstraints[infoPosition] ?? [])
     }
 
     @available(*, unavailable)
@@ -115,6 +162,12 @@ final class ViewerView: NSView {
         fitFraction = preferences.screenFraction
         upscalesSmallImages = preferences.upscaleSmallImages
         spaceClosesViewer = preferences.spaceClosesViewer
+        animatesInfo = preferences.animate
+        if preferences.infoPosition != infoPosition {
+            NSLayoutConstraint.deactivate(infoConstraints[infoPosition] ?? [])
+            infoPosition = preferences.infoPosition
+            NSLayoutConstraint.activate(infoConstraints[infoPosition] ?? [])
+        }
         if var current = zoom {
             current.setFitOptions(fraction: fitFraction, upscalesSmallImages: upscalesSmallImages)
             zoom = current
@@ -166,6 +219,7 @@ final class ViewerView: NSView {
         messageLabel.isHidden = true
         isDragging = false
         zoomBadge.alphaValue = 0
+        infoPanel.alphaValue = 0
         applyZoom(animated: false)
     }
 
@@ -346,11 +400,48 @@ final class ViewerView: NSView {
         }
     }
 
+    // MARK: - Сведения о снимке
+
+    /// Показать (или обновить) карточку: первая строка — имя файла, жирным.
+    func showInfo(_ lines: [String]) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        let text = NSMutableAttributedString()
+        for (index, line) in lines.enumerated() {
+            if index > 0 { text.append(NSAttributedString(string: "\n")) }
+            let font: NSFont = index == 0 ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+            text.append(NSAttributedString(string: line, attributes: [
+                .font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph,
+            ]))
+        }
+        infoLabel.attributedStringValue = text
+        guard infoPanel.alphaValue < 1 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animatesInfo ? 0.15 : 0
+            infoPanel.animator().alphaValue = 1
+        }
+    }
+
+    func hideInfo() {
+        guard infoPanel.alphaValue > 0 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animatesInfo ? 0.15 : 0
+            infoPanel.animator().alphaValue = 0
+        }
+    }
+
     // MARK: - Клавиатура (режим «свой список»; в режиме «следовать» клавиши разбирает перехват)
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func flagsChanged(with event: NSEvent) {
+        onModifiersChanged?(HoldModifiers(event.modifierFlags))
+        super.flagsChanged(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
+        onKeyPressed?((123...126).contains(event.keyCode))
         guard let command = ViewerCommand(event: event) else { return }
         // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно.
         if command == .close, event.isARepeat { return }

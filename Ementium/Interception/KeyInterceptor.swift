@@ -20,6 +20,8 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     private let onViewerKey: @Sendable (ViewerKeyAction) -> Void
     /// Жест масштаба при открытом просмотре в режиме «следовать за Finder».
     private let onViewerGesture: @Sendable (ViewerGesture) -> Void
+    /// Модификаторы и нажатия в режиме «следовать» — для сведений о снимке по `⌥`.
+    private let onViewerInput: @Sendable (ViewerInput) -> Void
 
     /// Все жесты трекпада приходят в перехват одним системным типом 29 («жест»); какой это жест —
     /// масштаб, двойное касание, сырые касания — видно только после преобразования в `NSEvent`
@@ -36,12 +38,14 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         state: InterceptionState,
         onAbsorb: @escaping @Sendable (_ urls: [URL]) -> Void,
         onViewerKey: @escaping @Sendable (ViewerKeyAction) -> Void,
-        onViewerGesture: @escaping @Sendable (ViewerGesture) -> Void
+        onViewerGesture: @escaping @Sendable (ViewerGesture) -> Void,
+        onViewerInput: @escaping @Sendable (ViewerInput) -> Void
     ) {
         self.state = state
         self.onAbsorb = onAbsorb
         self.onViewerKey = onViewerKey
         self.onViewerGesture = onViewerGesture
+        self.onViewerInput = onViewerInput
     }
 
     /// Создаёт tap. Возвращает `false`, если система не дала доступ (нет разрешения).
@@ -59,7 +63,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     private func createTap() -> Bool {
         if tap != nil { return true }
         let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-            | (1 << Self.gestureEventType)
+            | (1 << CGEventType.flagsChanged.rawValue) | (1 << Self.gestureEventType)
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             return Unmanaged<KeyInterceptor>.fromOpaque(refcon).takeUnretainedValue().handle(type: type, event: event)
@@ -123,6 +127,15 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
                 return Unmanaged.passUnretained(event)
             }
 
+        case .flagsChanged:
+            // Модификаторы всегда пропускаем: проглоченное изменение «залепит» модификатор у системы.
+            // Просмотру — копия, и только пока клавиатуру разбираем мы (как и с остальными клавишами).
+            let snapshot = state.snapshot
+            if snapshot.isViewerVisible, snapshot.isFollowingFinder, snapshot.isFinderFrontmost {
+                onViewerInput(.modifiers(HoldModifiers(event.flags)))
+            }
+            return Unmanaged.passUnretained(event)
+
         default:
             if type.rawValue == Self.gestureEventType {
                 return handleGesture(event)
@@ -155,6 +168,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
 
     private func handleViewerKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Unmanaged<CGEvent>? {
         let snapshot = state.snapshot
+        onViewerInput(.keyPressed(isArrow: ArrowKey(rawValue: keyCode) != nil))
         let action = InterceptionPolicy.followingAction(
             keyCode: keyCode, characters: characters(of: event), flags: event.flags, isRepeat: isRepeat,
             systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer
