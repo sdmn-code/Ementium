@@ -37,6 +37,20 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var mode = Mode.ownList
     private var directory: ImageDirectory?
     private var followedURL: URL?
+    /// Соседи показанной картинки в режиме «следовать» (от моста) — для смахивания.
+    private var followNeighbors: (around: URL, neighbors: PrefetchWindow.Neighbors)?
+    /// Смахивание опережает Finder: показана `swipeLead`, а мост ещё выделяет её. Прочие его сообщения
+    /// (прежние смахивания) пропускаем, иначе быстрое смахивание мигнёт назад. Не выделил за
+    /// `swipeLeadTime` (был занят) — показываем то, что выделено в Finder.
+    private var swipeLead: URL?
+    private var swipeLeadCheck: Task<Void, Never>?
+    private static let swipeLeadTime: Duration = .seconds(2)
+    /// Где, по последнему сообщению моста, стоит выделение Finder, и последние соседи от моста (как есть,
+    /// без пересчёта) — к ним возвращается `settleSwipeLead`.
+    private var finderURL: URL?
+    private var finderNeighbors: (around: URL, neighbors: PrefetchWindow.Neighbors)?
+    /// Листаем к началу списка — предзагрузка готовит картинки с той стороны.
+    private var travelsBackward = false
     /// Текущая и соседние картинки, декодированные под экран.
     private let cache = ImageCache()
     /// Кадры анимированной картинки (первый кадр — из кэша, как у обычных).
@@ -86,6 +100,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     var isFollowing: Bool { mode == .following && state == .visible }
 
+    /// Режим «следовать»: смахнули на картинку — выделить её в Finder. `false` — не отправлено
+    /// (Finder уже не активен).
+    var onFollowSelect: ((URL) -> Bool)?
+    /// Вернулись к выделению Finder — мосту прочитать соседей заново.
+    var onFollowResync: (() -> Void)?
+
     /// `⌘,` в режиме «свой список» (в режиме «следовать» — через перехват): открыть настройки.
     var onOpenSettings: (() -> Void)?
 
@@ -117,6 +137,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         panel.animationBehavior = .none
 
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
+        viewerView.swipeNeighbor = { [weak self] forward in self?.swipeNeighbor(forward: forward) ?? .none }
+        viewerView.onSwipe = { [weak self] forward in self?.swiped(forward: forward) ?? false }
         viewerView.onModifiersChanged = { [weak self] modifiers in self?.input(.modifiers(modifiers)) }
         viewerView.onKeyPressed = { [weak self] isArrow in self?.input(.keyPressed(isArrow: isArrow)) }
         viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
@@ -138,6 +160,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         directory = nil
         mode = .following
         followedURL = url
+        finderURL = url
+        finderNeighbors = nil
+        followNeighbors = nil
+        dropSwipeLead()
+        travelsBackward = false
         rememberDisplayedZoom()
         displayedURL = nil
         viewerView.clear()
@@ -147,7 +174,52 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     /// Finder выделил другую картинку.
     func followed(_ url: URL) {
+        finderURL = url
+        if let swipeLead, url != swipeLead { return }
+        dropSwipeLead()
+        follow(url)
+    }
+
+    /// Finder выделил `url` сам (после удаления), а просмотр уже ушёл смахиванием — запомнить, где выделение:
+    /// к нему вернётся `settleSwipeLead`, если смахивание не дойдёт.
+    func finderMoved(to url: URL) {
+        guard isFollowing else { return }
+        finderURL = url
+    }
+
+    /// Пользователь нажал стрелку (Home/End, ⌘⌫, ⌘Z) — дальше ведёт Finder, смахивание больше не ждём.
+    func dropSwipeLead() {
+        swipeLead = nil
+        swipeLeadCheck?.cancel()
+        swipeLeadCheck = nil
+    }
+
+    /// Finder так и не дошёл до показанной смахиванием картинки — показать то, что выделено в нём:
+    /// иначе Esc, `⌘⌫` и стрелки работали бы не с той картинкой, что на экране.
+    private func settleSwipeLead() {
+        guard swipeLead != nil else { return }
+        dropSwipeLead()
+        guard let finderURL, finderURL != followedURL else { return }
+        log.info("Смахивание: Finder не дошёл до показанной картинки — возвращаемся к его выделению")
+        let shown = followNeighbors
+        follow(finderURL)
+        // Соседи той, где стоит Finder: последние от моста или пересчитанные от показанной — иначе смахивать
+        // было бы некуда, пока мост не пришлёт новых (а сам он их не пришлёт: в Finder ничего не менялось).
+        if let finderNeighbors, finderNeighbors.around == finderURL {
+            followNeighbors = finderNeighbors
+        } else if let shown, let back = shown.neighbors.recentered(around: shown.around, to: finderURL) {
+            followNeighbors = (finderURL, back)
+        }
+        prefetchFollowNeighbors()
+        onFollowResync?()
+    }
+
+    private func follow(_ url: URL) {
         guard isFollowing, url != followedURL else { return }
+        if let known = followNeighbors, known.around == followedURL {
+            if url == known.neighbors.previous { travelsBackward = true }
+            if url == known.neighbors.next { travelsBackward = false }
+        }
         followedURL = url
         loadCurrent()
     }
@@ -211,6 +283,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         if isFollowing { onFollowingEnded?() }
         mode = .ownList
         followedURL = nil
+        travelsBackward = false
         directory = preview
         // Новый набор файлов: старая картинка не должна мелькать, пока декодируется новая.
         rememberDisplayedZoom()
@@ -234,12 +307,17 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func navigate(by step: Int) {
+    /// `true` — перешли и начали показ новой картинки.
+    @discardableResult
+    private func navigate(by step: Int) -> Bool {
+        travelsBackward = step < 0
         if isListPending {
             pendingSteps += step
-            return
+            return false
         }
-        if directory?.move(by: step) == true { loadCurrent() }
+        guard directory?.move(by: step) == true else { return false }
+        loadCurrent()
+        return true
     }
 
     private func applyPendingSteps() {
@@ -319,6 +397,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         pendingSteps = 0
         directory = nil
         followedURL = nil
+        finderURL = nil
+        finderNeighbors = nil
+        followNeighbors = nil
+        dropSwipeLead()
+        travelsBackward = false
         NSAnimationContext.runAnimationGroup { context in
             context.duration = fadeDuration
             panel.animator().alphaValue = 0
@@ -596,16 +679,90 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private func prefetchFromDirectory() {
         guard let directory, !isListPending else { return }
         let images = directory.images
-        let neighbors = PrefetchWindow.neighbors(
-            of: directory.index, count: images.count, url: { images[$0] }, isImage: { _ in true }
+        let neighbors = PrefetchWindow.sides(
+            of: directory.index, count: images.count, url: { images[$0] }, isImage: { _ in true },
+            forward: PrefetchWindow.forward, backward: PrefetchWindow.forward
         )
-        cache.prefetch(neighbors, around: directory.current, maxPixelSize: decodeSize)
+        cache.prefetch(neighbors.prefetchOrder(backwards: travelsBackward), around: directory.current, maxPixelSize: decodeSize)
     }
 
     /// Режим «следовать»: Finder встал на `current`, мост прочитал соседей в порядке окна.
-    func followedNeighbors(_ neighbors: [URL], around current: URL) {
-        guard isFollowing, current == followedURL else { return }
-        cache.prefetch(neighbors, around: current, maxPixelSize: decodeSize)
+    func followedNeighbors(_ neighbors: PrefetchWindow.Neighbors, around current: URL) {
+        guard isFollowing, let followedURL else { return }
+        finderURL = current
+        finderNeighbors = (current, neighbors)
+        if current == followedURL {
+            followNeighbors = (current, neighbors)
+            log.debug("Соседи от Finder: для показанной ←\(neighbors.backward.count, privacy: .public) →\(neighbors.forward.count, privacy: .public)")
+        } else {
+            // Смахивания обогнали Finder: соседи промежуточной картинки — пересчитать от показанной.
+            guard let shifted = neighbors.recentered(around: current, to: followedURL) else {
+                log.debug("Соседи от Finder: устарели — показанная дальше, чем они достают")
+                return
+            }
+            let known = followNeighbors.flatMap { $0.around == followedURL ? $0.neighbors : nil }
+            let merged = known.map { shifted.merged(with: $0) } ?? shifted
+            followNeighbors = (followedURL, merged)
+            log.debug("Соседи от Finder: для прежней, пересчитаны ←\(merged.backward.count, privacy: .public) →\(merged.forward.count, privacy: .public)")
+        }
+        prefetchFollowNeighbors()
+    }
+
+    private func prefetchFollowNeighbors() {
+        guard let followNeighbors, followNeighbors.around == followedURL else { return }
+        cache.prefetch(
+            followNeighbors.neighbors.prefetchOrder(backwards: travelsBackward), around: followNeighbors.around,
+            maxPixelSize: decodeSize
+        )
+    }
+
+    // MARK: - Смахивание
+
+    /// Соседний файл в сторону смахивания: свой список — из `ImageDirectory`, «следовать» — от моста
+    /// (пока соседи не прочитаны — некуда, картинка отпружинит).
+    private func neighborURL(forward: Bool) -> URL? {
+        switch mode {
+        case .ownList:
+            guard let directory, !isListPending else { return nil }
+            let index = directory.index + (forward ? 1 : -1)
+            return directory.images.indices.contains(index) ? directory.images[index] : nil
+        case .following:
+            guard let followNeighbors, followNeighbors.around == followedURL else { return nil }
+            return forward ? followNeighbors.neighbors.next : followNeighbors.neighbors.previous
+        }
+    }
+
+    private func swipeNeighbor(forward: Bool) -> ViewerView.SwipeNeighbor {
+        guard state == .visible, let url = neighborURL(forward: forward) else { return .none }
+        return cache.image(for: url).map { .image($0) } ?? .pending
+    }
+
+    /// Смахивание довели до конца. `false` — не перелистнули (просмотр закрывают, сосед уже не тот,
+    /// Finder не активен): на экране остаётся прежняя картинка.
+    private func swiped(forward: Bool) -> Bool {
+        guard state == .visible else { return false }
+        switch mode {
+        case .ownList:
+            return navigate(by: forward ? 1 : -1)
+        case .following:
+            guard let url = neighborURL(forward: forward), let current = followedURL,
+                  let known = followNeighbors?.neighbors,
+                  // Finder выделит её же; показываем сразу, не дожидаясь его ответа.
+                  onFollowSelect?(url) == true else { return false }
+            swipeLead = url
+            swipeLeadCheck?.cancel()
+            swipeLeadCheck = Task { [weak self] in
+                try? await Task.sleep(for: Self.swipeLeadTime)
+                guard !Task.isCancelled else { return }
+                self?.settleSwipeLead()
+            }
+            follow(url)
+            // Пока мост не прочитал соседей новой картинки (сотни мс) — сдвинуть известных, иначе быстрое
+            // смахивание следом упрётся в «некуда». Ответ моста их заменит.
+            followNeighbors = (url, known.recentered(around: current, to: url) ?? PrefetchWindow.Neighbors())
+            prefetchFollowNeighbors()
+            return true
+        }
     }
 
     private func fail(_ url: URL, error: Error, keepShown: Bool) {

@@ -1,5 +1,6 @@
 import AppKit
 import IOSurface
+import os
 
 /// Затемнённый фон и изображение. Большие изображения вписываются в экран, маленькие показываются
 /// в естественном размере и не растягиваются. Масштаб — клавишами и жестами трекпада, сдвиг увеличенной
@@ -12,6 +13,23 @@ final class ViewerView: NSView {
     var onModifiersChanged: ((HoldModifiers) -> Void)?
     var onKeyPressed: ((_ isArrow: Bool) -> Void)?
 
+    /// Соседняя картинка для смахивания (`true` — следующая).
+    enum SwipeNeighbor {
+        /// Листать некуда — край.
+        case none
+        /// Есть, но ещё не декодирована — въезжает пустой фон.
+        case pending
+        case image(DecodedImage)
+
+        var exists: Bool {
+            if case .none = self { return false }
+            return true
+        }
+    }
+    var swipeNeighbor: ((_ forward: Bool) -> SwipeNeighbor)?
+    /// Смахивание довели до конца — контроллер листает. `false` — не перелистнул.
+    var onSwipe: ((_ forward: Bool) -> Bool)?
+
     private let imageLayer = CALayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     /// Индикатор ожидания: Finder пропускает документы между картинками или картинка долго декодируется.
@@ -21,6 +39,21 @@ final class ViewerView: NSView {
     private let zoomBadge = NSView()
     private let zoomLabel = NSTextField(labelWithString: "")
     private var zoomBadgeHide: Task<Void, Never>?
+    /// Смахивание: соседняя картинка въезжает в этом слое; текущая сдвинута на `swipeOffset`.
+    private let neighborLayer = CALayer()
+    private var swipe: SwipeTracker?
+    private var swipeNeighbors: (next: SwipeNeighbor, previous: SwipeNeighbor) = (.none, .none)
+    private var swipeOffset: CGFloat = 0
+    private var isSwipeAnimating = false
+    /// Чем закончится идущая анимация смахивания — чтобы новое смахивание могло сразу её довести.
+    private var animatingDecision: (decision: SwipeTracker.Decision, forward: Bool, generation: Int)?
+    private var swipeGeneration = 0
+    /// После смахивания трекпад ещё с секунду шлёт инерцию — её глотаем до конца, иначе она сдвинула бы
+    /// новую картинку, если та открылась с запомненным масштабом.
+    private var swallowsSwipeMomentum = false
+    private let swipeLog = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "swipe")
+    /// Сколько раз показывали новую картинку — так смахивание понимает, показал ли контроллер следующую сразу.
+    private var shownCount = 0
     /// Сведения о снимке — карточка в углу, пока удерживается `⌥`.
     private let infoPanel = NSVisualEffectView()
     private let infoLabel = NSTextField(wrappingLabelWithString: "")
@@ -46,6 +79,10 @@ final class ViewerView: NSView {
         imageLayer.contentsGravity = .resizeAspect
         imageLayer.minificationFilter = .trilinear
         layer?.addSublayer(imageLayer)
+        neighborLayer.contentsGravity = .resizeAspect
+        neighborLayer.minificationFilter = .trilinear
+        neighborLayer.isHidden = true
+        layer?.addSublayer(neighborLayer)
 
         messageLabel.font = .systemFont(ofSize: 15)
         // Фон всегда тёмный, поэтому цвет фиксированный, а не системный (в светлой теме тот тёмный).
@@ -193,6 +230,7 @@ final class ViewerView: NSView {
             next.restore(scale: scale, offset: offset, quarterTurns: turns)
         }
         zoom = next
+        shownCount += 1
         // `IOSurface` из сервиса декодирования — слой показывает его напрямую, без копирования.
         imageLayer.contents = loaded.surface
         messageLabel.isHidden = true
@@ -216,6 +254,7 @@ final class ViewerView: NSView {
     }
 
     func clear() {
+        resetSwipe()
         imageLayer.contents = nil
         zoom = nil
         messageLabel.isHidden = true
@@ -260,7 +299,7 @@ final class ViewerView: NSView {
             origin: .zero,
             size: turns.isMultiple(of: 2) ? rect.size : CGSize(width: rect.height, height: rect.width)
         )
-        imageLayer.position = CGPoint(x: rect.midX, y: rect.midY)
+        imageLayer.position = CGPoint(x: rect.midX + swipeOffset, y: rect.midY)
         CATransaction.commit()
         updateCursor()
     }
@@ -355,11 +394,166 @@ final class ViewerView: NSView {
 
     /// Прокрутка двумя пальцами или колёсиком двигает увеличенную картинку.
     override func scrollWheel(with event: NSEvent) {
+        if handleSwipe(event) { return }
         guard var current = zoom, current.canPan else { return }
         // Колёсико мыши даёт строки, трекпад — точные пункты.
         let factor: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
         current.pan(by: CGVector(dx: event.scrollingDeltaX * factor, dy: -event.scrollingDeltaY * factor))
         commit(current, animated: false)
+    }
+
+    // MARK: - Смахивание
+
+    /// Прокрутка двумя пальцами по трекпаду во «вписать» — смахивание. Увеличенная картинка, как и раньше,
+    /// двигается (`false` — событие не наше). Колёсико мыши (без фаз) не листает.
+    private func handleSwipe(_ event: NSEvent) -> Bool {
+        guard event.hasPreciseScrollingDeltas else { return false }
+        // Инерция после смахивания не листает дальше.
+        if !event.momentumPhase.isEmpty {
+            if swallowsSwipeMomentum {
+                if event.momentumPhase == .ended || event.momentumPhase == .cancelled { swallowsSwipeMomentum = false }
+                return true
+            }
+            return swipe != nil || isSwipeAnimating || zoom?.isFit != false
+        }
+        switch event.phase {
+        case .began:
+            swallowsSwipeMomentum = false
+            // Быстро смахнули ещё раз, пока доезжает прошлое, — довести его сразу, а не терять новое.
+            if isSwipeAnimating, let pending = animatingDecision {
+                imageLayer.removeAllAnimations()
+                neighborLayer.removeAllAnimations()
+                completeSwipe(pending.decision, forward: pending.forward, generation: pending.generation)
+            }
+            guard zoom?.isFit != false else { return false }
+            swipeNeighbors = (swipeNeighbor?(true) ?? .none, swipeNeighbor?(false) ?? .none)
+            swipe = SwipeTracker(
+                width: bounds.width, canGoNext: swipeNeighbors.next.exists, canGoPrevious: swipeNeighbors.previous.exists
+            )
+            trackSwipe(event)
+            return true
+        case .changed:
+            guard swipe != nil else { return false }
+            // Пока вели пальцы, картинку увеличили щипком — это уже не смахивание, а сдвиг.
+            guard zoom?.isFit != false else {
+                swipe = nil
+                placeSwipe(offset: 0)
+                return false
+            }
+            trackSwipe(event)
+            return true
+        case .ended, .cancelled:
+            guard let tracker = swipe else { return false }
+            swipe = nil
+            let decision = event.phase == .cancelled ? .cancel : tracker.end(time: event.timestamp)
+            let motion = tracker.motion(at: event.timestamp)
+            let phase = event.phase == .cancelled ? "отменено системой" : tracker.isVertical ? "отпущено, вертикальное" : "отпущено"
+            swallowsSwipeMomentum = true
+            swipeLog.info("Смахивание \(phase, privacy: .public): путь \(Int(tracker.distance), privacy: .public) пт, скорость \(Int(motion.velocity), privacy: .public) пт/с, в конце \(Int(motion.recent), privacy: .public) пт, соседи \(self.swipeNeighbors.previous.exists ? "←" : "·", privacy: .public)\(self.swipeNeighbors.next.exists ? "→" : "·", privacy: .public) → \(String(describing: decision), privacy: .public)")
+            finishSwipe(decision)
+            return true
+        default:
+            return swipe != nil
+        }
+    }
+
+    private func trackSwipe(_ event: NSEvent) {
+        guard var tracker = swipe else { return }
+        // Движение пальцев: при «естественной прокрутке» оно совпадает с прокруткой, иначе — обратное.
+        let fingers: CGFloat = event.isDirectionInvertedFromDevice ? 1 : -1
+        tracker.move(dx: event.scrollingDeltaX * fingers, dy: event.scrollingDeltaY * fingers, time: event.timestamp)
+        swipe = tracker
+        placeSwipe(offset: tracker.offset)
+    }
+
+    /// Просмотр закрыт или открыт заново — смахивание бросить: отложенное завершение не должно листать
+    /// новый список, а соседняя картинка — держать память.
+    private func resetSwipe() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        imageLayer.removeAllAnimations()
+        neighborLayer.removeAllAnimations()
+        neighborLayer.isHidden = true
+        neighborLayer.contents = nil
+        CATransaction.commit()
+        swipe = nil
+        swipeOffset = 0
+        isSwipeAnimating = false
+        animatingDecision = nil
+        swipeGeneration += 1
+        swipeNeighbors = (.none, .none)
+        swallowsSwipeMomentum = false
+    }
+
+    /// Текущая картинка сдвинута на `offset`, с нужной стороны — соседняя.
+    private func placeSwipe(offset: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        swipeOffset = offset
+        applyZoom(animated: false)
+        let forward = offset < 0
+        let neighbor = forward ? swipeNeighbors.next : swipeNeighbors.previous
+        if offset != 0, case .image(let image) = neighbor {
+            let size = image.isVector ? Self.vectorSize(image.pointSize, in: bounds.size) : image.pointSize
+            let fitted = ZoomModel(
+                imageSize: size, viewSize: bounds.size, fitFraction: fitFraction, upscalesSmallImages: upscalesSmallImages
+            ).imageRect
+            neighborLayer.contents = image.surface
+            neighborLayer.frame = fitted.offsetBy(dx: offset + (forward ? bounds.width : -bounds.width), dy: 0)
+            neighborLayer.isHidden = false
+        } else {
+            neighborLayer.isHidden = true
+        }
+        CATransaction.commit()
+    }
+
+    /// Отпустили: довести до конца (перелистнуть) или вернуть. Без «плавного появления» — быстрее.
+    private func finishSwipe(_ decision: SwipeTracker.Decision) {
+        let target: CGFloat = switch decision {
+        case .next: -bounds.width
+        case .previous: bounds.width
+        case .cancel: 0
+        }
+        isSwipeAnimating = true
+        let forward = decision == .next
+        swipeGeneration += 1
+        let generation = swipeGeneration
+        animatingDecision = (decision, forward, generation)
+        let neighborFrame = neighborLayer.frame.offsetBy(dx: target - swipeOffset, dy: 0)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(animatesInfo ? 0.22 : 0.12)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated { self?.completeSwipe(decision, forward: forward, generation: generation) }
+        }
+        swipeOffset = target
+        if let rect = zoom?.imageRect {
+            imageLayer.position = CGPoint(x: rect.midX + target, y: rect.midY)
+        }
+        neighborLayer.frame = neighborFrame
+        CATransaction.commit()
+    }
+
+    private func completeSwipe(_ decision: SwipeTracker.Decision, forward: Bool, generation: Int) {
+        // Уже доведено (новое смахивание довело его раньше конца анимации) — второй раз не листать.
+        guard isSwipeAnimating, generation == swipeGeneration else { return }
+        animatingDecision = nil
+        // Всё в одной транзакции без анимаций: прежняя картинка не мелькнёт в центре.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        swipeOffset = 0
+        neighborLayer.isHidden = true
+        neighborLayer.contents = nil
+        isSwipeAnimating = false
+        swipeNeighbors = (.none, .none)
+        if decision != .cancel {
+            // Сначала листает контроллер — пока на экране прежняя картинка, её масштаб и поворот запомнятся
+            // под её именем. Готовая в кэше новая показывается сразу (синхронно); ещё не готовая — пусто.
+            let shownBefore = shownCount
+            if onSwipe?(forward) == true, shownCount == shownBefore { imageLayer.contents = nil }
+        }
+        applyZoom(animated: false)
+        CATransaction.commit()
     }
 
     // Окно просмотра в режиме «следовать за Finder» неактивно — первый же клик должен работать.

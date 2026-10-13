@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onViewerKey: { [weak self, bridge] action in
             // Шаг — сразу в мост, без захода на главный поток: каждая миллисекунда видна при листании.
             if case .step(let key) = action {
+                // Раньше шага: его ответ моста не должен потеряться как «прежнее смахивание».
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.viewer.dropSwipeLead() }
+                }
                 bridge.step(key)
             } else {
                 Task { @MainActor in self?.handleViewerKey(action) }
@@ -90,6 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.model.onOpenAccessibilitySettings = { [weak self] in self?.permissions.openAccessibilitySettings() }
         viewer.onFollowingEnded = { [weak self] in self?.bridge.stopFollowing() }
         viewer.onOpenSettings = { [weak self] in self?.showSettings() }
+        viewer.onFollowResync = { [weak self] in self?.bridge.rereadNeighbors() }
+        viewer.onFollowSelect = { [weak self] url in
+            // Как и для стрелок с клавиатуры: только пока Finder активен.
+            guard let self, self.state.snapshot.isFinderFrontmost else { return false }
+            self.bridge.select(swipedTo: url)
+            return true
+        }
         NotificationCenter.default.addObserver(
             self, selector: #selector(preferencesDidChange(_:)), name: UserDefaults.didChangeNotification, object: nil
         )
@@ -183,6 +194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSettings()
         case .trash:
             guard viewer.isFollowing else { return }
+            // Дальше ведёт Finder: его ответ (следующая картинка) не должен потеряться как «прежнее смахивание».
+            viewer.dropSwipeLead()
             guard let url = viewer.displayedFollowedImage else {
                 viewer.showMessage(String(localized: "Image is still loading"))
                 return
@@ -196,8 +209,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         case .undoTrash:
+            viewer.dropSwipeLead()
             bridge.undoTrash()
         case .edge(let first):
+            viewer.dropSwipeLead()
             bridge.jumpToEdge(first: first)
         case .rotate(let clockwise):
             viewer.rotate(clockwise: clockwise)
@@ -213,8 +228,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleTrash(_ event: FinderBridge.TrashEvent) {
         switch event {
         case .moved(let deleted, let next):
-            // Событие от прошлого сеанса просмотра (закрыли и открыли снова, пока оно шло) — не наше.
-            guard viewer.followedFile == deleted else { return }
+            // Событие от прошлого сеанса просмотра (закрыли и открыли снова, пока оно шло) — не наше. Или, пока
+            // шло удаление, смахнули дальше: просмотр сверится с Finder сам — пусть знает, где теперь выделение.
+            guard viewer.followedFile == deleted else {
+                if let next { viewer.finderMoved(to: next) }
+                return
+            }
             if let next {
                 viewer.followed(next)
                 viewer.showMessage(String(localized: "Moved to Trash"))

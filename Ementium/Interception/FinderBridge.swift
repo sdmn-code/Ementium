@@ -45,7 +45,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Finder ищет следующую картинку — пропускает не-изображения (для индикатора ожидания).
     private let onBusy: @Sendable (Bool) -> Void
     /// Соседние картинки показанной в порядке предзагрузки и сама показанная (вызывается на потоке моста).
-    private let onNeighbors: @Sendable ([URL], URL) -> Void
+    private let onNeighbors: @Sendable (PrefetchWindow.Neighbors, URL) -> Void
     private let onTrash: @Sendable (TrashEvent) -> Void
     private let thread = RunLoopThread(name: "Ementium.FinderBridge")
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "finder")
@@ -69,10 +69,22 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Чтение соседей для предзагрузки — после того как Finder постоял на картинке.
     private var neighborTimer: Timer?
     /// Последние отправленные соседи — одинаковые не шлём повторно.
-    private var lastNeighbors: (shown: URL, neighbors: [URL])?
+    private var lastNeighbors: (shown: URL, neighbors: PrefetchWindow.Neighbors)?
+    /// Какой файл на каком месте окна (`nil` — элемент без файла, например заголовок группы): каждый элемент
+    /// спрашиваем у Finder один раз за просмотр, а не на каждом смахивании — иначе чтение соседей в «Недавних»
+    /// занимало 100–250 мс. Только для соседей и поиска цели смахивания: выделяемый файл всегда сверяется
+    /// с Finder заново. Сбрасывается при новом просмотре, другом виде и другом числе элементов.
+    private var itemURLs: (view: AXUIElement, count: Int, urls: [Int: URL?])?
     /// Счётчик нажатий стрелок. Увеличивается на потоке перехвата **до** постановки шага в очередь моста,
     /// чтобы чтение соседей, которое идёт на потоке моста, увидело нажатие и прервалось.
     private let stepCount = OSAllocatedUnfairLock(initialState: 0)
+    /// Счётчик смахиваний: выполняется только последнее. Ближнее чтение соседей они не прерывают — иначе при
+    /// смахиваниях каждые 0,2 с соседи не дочитывались бы никогда (просмотр пересчитает их от показанной).
+    private let swipeCount = OSAllocatedUnfairLock(initialState: 0)
+    /// Счётчик любых команд моста: дальний поиск соседей уступает им место — Esc, `⌘⌫`, Home/End его не ждут.
+    private let commandCount = OSAllocatedUnfairLock(initialState: 0)
+    /// Отложенное выделение смахнутой картинки: ждём, пока долетят отправленные стрелки.
+    private var swipeSelectTimer: Timer?
     /// Удалённые в этом сеансе просмотра — `⌘Z` возвращает только их (иначе отменили бы чужое действие в Finder).
     private var trashed: [URL] = []
     /// Идёт удаление или возврат: ждём, пока файл исчезнет (появится).
@@ -94,8 +106,11 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private static let lookaheadLimit = 1000
     /// Соседей читаем, когда листание остановилось: при зажатой стрелке шаги идут чаще, и каждый отменяет чтение.
     private static let neighborDelay = 0.15
-    /// Соседей ищем недалеко: предзагрузка — не листание, держать поток моста ради неё долго нельзя.
-    private static let neighborLimit = 50
+    /// Соседей ищем так же далеко, как стрелки: в «Недавних» между картинками бывают десятки документов, и с
+    /// лимитом в 50 элементов смахивание упиралось в мнимый край. Сначала — поблизости (быстро), потом дальше;
+    /// дорого только в первый раз — см. `itemURLs`.
+    private static let nearNeighborLimit = 50
+    private static let neighborLimit = lookaheadLimit
     /// Finder удаляет и возвращает файл за 0,2–1,5 с (прототип FinderTrashProbe): дольше 3 с — предупреждаем,
     /// после 12 с — сдаёмся.
     private static let trashSlow = 3.0
@@ -116,7 +131,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         state: InterceptionState,
         onShow: @escaping @Sendable (URL) -> Void,
         onBusy: @escaping @Sendable (Bool) -> Void,
-        onNeighbors: @escaping @Sendable ([URL], URL) -> Void,
+        onNeighbors: @escaping @Sendable (PrefetchWindow.Neighbors, URL) -> Void,
         onTrash: @escaping @Sendable (TrashEvent) -> Void
     ) {
         self.state = state
@@ -143,11 +158,14 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     /// Просмотр открыт на `url` и дальше листается вслед за выделением Finder.
     func startFollowing(at url: URL) {
+        command()
         thread.perform {
+            self.swipeSelectTimer?.invalidate()
             self.navigation = FinderNavigation(showing: url)
             self.queuedStep = nil
             self.edgeTimer?.invalidate()
             self.lastNeighbors = nil
+            self.itemURLs = nil
             self.trashed.removeAll()
             self.cancelTrash()
             self.scheduleNeighbors()
@@ -156,9 +174,12 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     /// Просмотр закрыт. Если Finder стоит на не-изображении, сначала вернём выделение на картинку.
     func stopFollowing() {
+        command()
         thread.perform {
             self.queuedStep = nil
             self.neighborTimer?.invalidate()
+            self.swipeSelectTimer?.invalidate()
+            self.itemURLs = nil
             self.trashed.removeAll()
             self.cancelTrash()
             self.execute(self.navigation?.finish() ?? [])
@@ -169,22 +190,54 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// `⌘⌫` в просмотре: переместить показанную картинку в Корзину через Finder.
     /// Проверка «можно ли» (Корзина, защита, права) — до вызова, у вызывающего.
     func trash(_ url: URL) {
+        command()
         thread.perform { self.performTrash(url) }
     }
 
     /// `Home` / `End` в просмотре: первая / последняя картинка в окне Finder.
     func jumpToEdge(first: Bool) {
+        command()
         thread.perform { self.performEdge(first: first) }
+    }
+
+    /// Смахнули в просмотре на `url` — выделить его в Finder сразу (AX), без стрелок: при быстрых смахиваниях
+    /// стрелки копились бы в очереди, и Finder секундами позже отыгрывал бы весь путь. Из нескольких
+    /// запросов подряд выполняется только последний; нажатая после него стрелка тоже его отменяет.
+    func select(swipedTo url: URL) {
+        let ticket = swipeCount.withLock { count in
+            count += 1
+            return count
+        }
+        let steps = stepCount.withLock { $0 }
+        command()
+        thread.perform { self.performSwipeSelect(url, ticket: ticket, steps: steps) }
+    }
+
+    /// Просмотр вернулся к выделению Finder (смахивание до него не дошло) — прочитать соседей заново,
+    /// ничего не беря из запомненного.
+    func rereadNeighbors() {
+        command()
+        thread.perform {
+            self.lastNeighbors = nil
+            self.itemURLs = nil
+            self.scheduleNeighbors()
+        }
+    }
+
+    private func command() {
+        commandCount.withLock { $0 += 1 }
     }
 
     /// `⌘Z` в просмотре: вернуть последнюю удалённую в этом сеансе.
     func undoTrash() {
+        command()
         thread.perform { self.performUndoTrash() }
     }
 
     /// Пользователь нажал стрелку в просмотре (вызывается с потока перехвата).
     func step(_ key: ArrowKey) {
         stepCount.withLock { $0 += 1 }
+        command()
         thread.perform { self.performStep(key) }
     }
 
@@ -432,6 +485,108 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         scheduleNeighbors()
     }
 
+    private func performSwipeSelect(_ url: URL, ticket: Int, steps: Int) {
+        guard swipeCount.withLock({ $0 }) == ticket, stepCount.withLock({ $0 }) == steps else {
+            log.debug("Смахивание → Finder: пропуск, устарело (смахнули дальше или нажали стрелку)")
+            return
+        }
+        // Стрелка, нажатая перед смахиванием, ещё может быть в очереди Finder: выделим после неё, иначе она
+        // увела бы выделение с показанной картинки.
+        let wait = Self.keysSettleTime - Date().timeIntervalSince(lastKeyPost)
+        if wait > 0 {
+            swipeSelectTimer?.invalidate()
+            let timer = Timer(timeInterval: wait, repeats: false) { [weak self] _ in
+                self?.performSwipeSelect(url, ticket: ticket, steps: steps)
+            }
+            RunLoop.current.add(timer, forMode: .default)
+            swipeSelectTimer = timer
+            return
+        }
+        let started = Date()
+        // Не готовы (стрелка в полёте, удаление) — просмотр сам вернётся к выделению Finder.
+        guard trashOperation == nil, let navigation, navigation.isSettled, isFinderReady,
+              let focused = focusedViewElement() else {
+            log.info("Смахивание → Finder: пропуск, не готов (удаление: \(self.trashOperation != nil, privacy: .public), автомат стоит: \(self.navigation?.isSettled == true, privacy: .public), Finder активен: \(self.isFinderReady, privacy: .public))")
+            return
+        }
+        guard url != navigation.shown else {
+            onShow(url)
+            // Туда-обратно быстрее моста: Finder не двигался, а дальний поиск соседей могло прервать смахивание.
+            scheduleNeighbors()
+            return
+        }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard let (items, _, selected) = displayedItems() else {
+            log.error("Смахивание: не прочитал окно Finder")
+            return
+        }
+        // Запомненное на месте выделенного — другой файл: список обновился, забываем.
+        if let cache = itemURLs, let known = cache.urls[selected], known != findURL(items[selected], depth: 2) {
+            itemURLs = nil
+        }
+        guard let index = index(of: url, in: items, around: selected) else {
+            log.error("Смахивание: не нашёл в окне Finder показанный файл")
+            return
+        }
+        let found = Date()
+        pendingTrash?.invalidate()
+        neighborTimer?.invalidate()
+        edgeTimer?.invalidate()
+        queuedStep = nil
+        // Finder не дал выделить — не подтверждаем: просмотр через пару секунд вернётся к его выделению.
+        guard setSelection(items[index]) else { return }
+        let selectedAt = Date()
+        self.navigation = FinderNavigation(showing: url)
+        lastNeighbors = nil
+        onShow(url)
+        // Соседи — сразу, по тем же элементам: выделили сами, ждать уведомления Finder незачем. Отложенное
+        // чтение не успевало бы: следующее смахивание через 0,2 с сбрасывает таймер.
+        let neighbors = publishNeighbors(of: index, in: items, shown: url, ticket: steps)
+        let finished = Date()
+        func ms(_ from: Date, _ to: Date) -> Int { Int(to.timeIntervalSince(from) * 1000) }
+        log.debug("Смахивание → Finder: \(ms(started, finished), privacy: .public) мс (поиск \(ms(started, found), privacy: .public), выделение \(ms(found, selectedAt), privacy: .public), соседи \(ms(selectedAt, finished), privacy: .public)), вид \(String(describing: self.viewKind), privacy: .public), элементов \(items.count, privacy: .public), сдвиг \(index - selected, privacy: .public), соседи ←\(neighbors?.backward.count ?? -1, privacy: .public) →\(neighbors?.forward.count ?? -1, privacy: .public)")
+    }
+
+    /// Файл элемента `index` — из запомненного или у Finder (и запомнить).
+    private func cachedURL(at index: Int, in items: [AXUIElement]) -> URL? {
+        guard let view = viewElement else { return findURL(items[index], depth: 2) }
+        if let cache = itemURLs, CFEqual(cache.view, view), cache.count == items.count {
+            if let known = cache.urls[index] { return known }
+        } else {
+            itemURLs = (view, items.count, [:])
+        }
+        // «Нет файла» не запоминаем: значки и галерея создаются лениво, и у свежего элемента адреса ещё может не быть.
+        guard let url = findURL(items[index], depth: 2) else { return nil }
+        itemURLs?.urls.updateValue(url, forKey: index)
+        return url
+    }
+
+    /// Место `url` в окне: запомненное (обычно это сосед, найденный раньше) или поиск от выделенного в обе
+    /// стороны. Найденное сверяется с Finder: выделять по устаревшему нельзя.
+    private func index(of url: URL, in items: [AXUIElement], around selected: Int) -> Int? {
+        let remembered = itemURLs?.urls.first(where: { $0.value == url })?.key
+        let candidate = remembered ?? Self.outward(from: selected, count: items.count).first {
+            self.cachedURL(at: $0, in: items) == url
+        }
+        if let candidate, candidate < items.count, findURL(items[candidate], depth: 2) == url { return candidate }
+        // Запомненное разошлось с окном (список обновился) — забываем и ищем заново.
+        itemURLs = nil
+        return Self.outward(from: selected, count: items.count).first { self.cachedURL(at: $0, in: items) == url }
+    }
+
+    /// Индексы от `start` в обе стороны: start, +1, −1, +2, −2…
+    nonisolated static func outward(from start: Int, count: Int) -> [Int] {
+        guard (0..<count).contains(start) else { return [] }
+        var result = [start]
+        for distance in 1..<max(count, 1) {
+            if start + distance < count { result.append(start + distance) }
+            if start - distance >= 0 { result.append(start - distance) }
+            if start + distance >= count, start - distance < 0 { break }
+        }
+        return result
+    }
+
     // MARK: - Поток моста: удаление в Корзину
 
     /// `⌘⌫` удаляет то, что выделено в Finder, поэтому всё проверяется прямо перед отправкой:
@@ -586,14 +741,21 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     /// Выделить файл в Finder через AX — так же надёжно во всех видах (прототип FinderTrashProbe).
     private func select(_ url: URL) {
-        guard let viewElement, let (items, _) = orderedItems(),
+        guard let (items, _) = orderedItems(),
               let item = items.first(where: { findURL($0, depth: 2) == url }) else {
             log.error("Не нашёл в окне Finder файл, который нужно выделить")
             return
         }
+        setSelection(item)
+    }
+
+    @discardableResult
+    private func setSelection(_ item: AXUIElement) -> Bool {
+        guard let viewElement else { return false }
         let key = elements(attribute(viewElement, kAXRowsAttribute)) != nil ? kAXSelectedRowsAttribute : kAXSelectedChildrenAttribute
         let result = AXUIElementSetAttributeValue(viewElement, key as CFString, [item] as CFArray)
         if result != .success { log.error("Finder не дал выделить файл: \(result.rawValue)") }
+        return result == .success
     }
 
     // MARK: - Поток моста: соседи для предзагрузки
@@ -616,23 +778,43 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         guard let (items, _, selected) = displayedItems(),
               // Выделение в Finder могло сдвинуться, а уведомление ещё не обработано — соседи были бы не те.
               findURL(items[selected], depth: 2) == navigation.shown else { return }
-        var interrupted = false
-        let neighbors = PrefetchWindow.neighbors(
-            of: selected, count: items.count,
-            url: { index in
-                if interrupted || self.stepCount.withLock({ $0 }) != ticket {
-                    interrupted = true
-                    return nil
-                }
-                return self.findURL(items[index], depth: 2)
-            },
-            isImage: ImageDirectory.isImage,
-            limit: Self.neighborLimit
-        )
-        guard !interrupted else { return }
-        if let last = lastNeighbors, last.shown == navigation.shown, last.neighbors == neighbors { return }
-        lastNeighbors = (navigation.shown, neighbors)
-        onNeighbors(neighbors, navigation.shown)
+        // Запомненное на месте выделенного — другой файл: список обновился, забываем.
+        if cachedURL(at: selected, in: items) != navigation.shown { itemURLs = nil }
+        publishNeighbors(of: selected, in: items, shown: navigation.shown, ticket: ticket)
+    }
+
+    /// Соседи `shown` — в просмотр. Стрелка прерывает чтение (листание важнее предзагрузки).
+    @discardableResult
+    private func publishNeighbors(of selected: Int, in items: [AXUIElement], shown: URL, ticket: Int) -> PrefetchWindow.Neighbors? {
+        let commands = commandCount.withLock { $0 }
+        var published: PrefetchWindow.Neighbors?
+        // Сначала поблизости — быстро. Не набралось с какой-то стороны — ищем дальше; этот поиск уступает любой
+        // команде (смахивание, Esc, ⌘⌫…): прочитанное запомнено, следующее чтение продолжит с того же места.
+        for (limit, yields) in [(Self.nearNeighborLimit, false), (Self.neighborLimit, true)] {
+            var interrupted = false
+            let neighbors = PrefetchWindow.sides(
+                of: selected, count: items.count,
+                url: { index in
+                    if interrupted || self.stepCount.withLock({ $0 }) != ticket
+                        || (yields && self.commandCount.withLock({ $0 }) != commands) {
+                        interrupted = true
+                        return nil
+                    }
+                    return self.cachedURL(at: index, in: items)
+                },
+                isImage: ImageDirectory.isImage,
+                forward: PrefetchWindow.reach, backward: PrefetchWindow.reach,
+                limit: limit
+            )
+            guard !interrupted else { return published }
+            published = neighbors
+            if lastNeighbors?.shown != shown || lastNeighbors?.neighbors != neighbors {
+                lastNeighbors = (shown, neighbors)
+                onNeighbors(neighbors, shown)
+            }
+            if neighbors.forward.count == PrefetchWindow.reach, neighbors.backward.count == PrefetchWindow.reach { break }
+        }
+        return published
     }
 
     /// Клавиши до элемента `target`: в списке, колонках и галерее — `count` одинаковых стрелок,
