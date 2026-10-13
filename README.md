@@ -8,7 +8,7 @@ The interface is in English and Russian (follows the system language). Detailed 
 
 ## Features
 
-- Space in Finder opens the selected image; arrows browse in Finder's order (any sorting, groups, Recents, search results). Documents between images are skipped, and Finder's selection follows the viewer.
+- Space in Finder opens the selected image; arrows browse in Finder's order (any sorting, groups, Recents, search results; on the Desktop — row by row). Documents between images are skipped, and Finder's selection follows the viewer.
 - Two-finger swipe on the trackpad browses too: the image follows your fingers, like in Photos.
 - Zoom with `+`/`-`, pinch, double-tap; pan with two fingers or by dragging. Each image remembers its zoom and rotation until the viewer closes (optional).
 - Rotate the view by 90° (the file isn't changed), copy the file with `⌘C`, open it in its default app with `⌘O`.
@@ -23,7 +23,7 @@ The interface is in English and Russian (follows the system language). Detailed 
 
 ## Installation
 
-1. Download `Ementium-1.0.dmg` from [Releases](https://github.com/sdmn-code/Ementium/releases) and drag Ementium into Applications.
+1. Download `Ementium-1.1.dmg` from [Releases](https://github.com/sdmn-code/Ementium/releases) and drag Ementium into Applications.
 2. The app isn't notarized by Apple (no paid developer account yet), so macOS will refuse to open it the first time. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Ementium. Since macOS 15 the Control-click → Open shortcut no longer works for this.
 3. On first launch, Ementium explains why it needs **Accessibility** and offers a button to grant it. Interception starts by itself once access is granted — no restart needed.
 
