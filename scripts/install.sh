@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Собирает Ementium (Release, Universal) и устанавливает в ~/Applications, перезапуская работающий процесс.
+# Собирает Ementium (Release, arm64) и устанавливает в /Applications, перезапуская работающий процесс.
 #
 # Одна установленная копия — одно разрешение «Универсальный доступ» и правильная цель
 # для «Открыть в программе». Подпись (Apple Development) стабильна между сборками,
@@ -10,7 +10,9 @@
 set -euo pipefail
 cd "${0:A:h}/.."
 
-DEST="$HOME/Applications/Ementium.app"
+DEST="/Applications/Ementium.app"
+# Раньше скрипт ставил сюда — вторая копия путала запуск из «Программ» и «Открыть в программе».
+OLD="$HOME/Applications/Ementium.app"
 BUILT="build/DerivedData/Build/Products/Release/Ementium.app"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
@@ -27,9 +29,13 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
 
 echo "→ Установка в $DEST"
 pkill -x Ementium 2>/dev/null && sleep 0.5 || true
-mkdir -p "$HOME/Applications"
 rm -rf "$DEST"
 ditto "$BUILT" "$DEST"
+if [[ -d "$OLD" ]]; then
+  "$LSREGISTER" -u "$OLD" 2>/dev/null || true
+  rm -rf "$OLD"
+  echo "→ Убрана прежняя копия из ~/Applications"
+fi
 
 # Промежуточные сборки не должны перехватывать «Открыть в программе».
 for app in build/DerivedData/Build/Products/*/Ementium.app(N); do

@@ -11,6 +11,12 @@ enum LoginItem {
     /// macOS ждёт подтверждения в «Системные настройки → Основные → Объекты входа».
     static var requiresApproval: Bool { SMAppService.mainApp.status == .requiresApproval }
 
+    /// И то и другое — одним запросом: он межпроцессный и бывает небыстрым.
+    static var state: (isEnabled: Bool, requiresApproval: Bool) {
+        let status = SMAppService.mainApp.status
+        return (status == .enabled, status == .requiresApproval)
+    }
+
     /// Включить или выключить. Возвращает `false`, если система отказала.
     @discardableResult
     static func set(_ enabled: Bool) -> Bool {

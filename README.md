@@ -57,7 +57,7 @@ Xcode 27 or later:
 
 ```bash
 xcodebuild -project Ementium.xcodeproj -scheme Ementium test                 # tests
-scripts/install.sh                                                           # Release build into ~/Applications
+scripts/install.sh                                                           # Release build into /Applications
 ```
 
 ## License
