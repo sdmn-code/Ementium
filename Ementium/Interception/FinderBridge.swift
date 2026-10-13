@@ -344,6 +344,12 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         pendingTrash = nil
         guard let current = navigation, !current.isFinishing, trashOperation == nil else { return }
         neighborTimer?.invalidate()
+        // Рабочий стол: стрелка Finder там идёт по пространству и на следующий ряд не переносится — стрелок не
+        // шлём, а сразу выделяем следующую картинку в порядке рядов.
+        if viewKind == .desktop {
+            performDesktopStep(forward: key.isForward)
+            return
+        }
         // Пока пачка в полёте, Finder стоит где-то посреди документов: заглянув оттуда, мы отправили бы
         // вторую пачку и перелетели цель. Откладываем нажатие до показа картинки.
         if current.isJumping {
@@ -423,8 +429,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         }
     }
 
-    /// Элементы вида в экранном порядке, их положения (только для значков и галереи) и индекс выделенного.
-    /// `nil` — заглянуть нельзя (рабочий стол, группы в значках, выделенный не найден).
+    /// Элементы вида в экранном порядке, их положения (только для значков, галереи и рабочего стола) и индекс
+    /// выделенного. `nil` — заглянуть нельзя (группы в значках, выделенный не найден).
     private func displayedItems() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
         guard let viewElement, let (items, positions) = orderedItems(),
               let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
@@ -435,7 +441,14 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     /// Элементы вида в экранном порядке и их положения (только для значков и галереи).
     private func orderedItems() -> (items: [AXUIElement], positions: [CGPoint?])? {
-        guard [.list, .columns, .gallery, .icons].contains(viewKind), let viewElement else { return nil }
+        guard [.list, .columns, .gallery, .icons, .desktop].contains(viewKind), let viewElement else { return nil }
+        if viewKind == .desktop {
+            // Значки — прямые дети группы рабочего стола, в AX вперемешку; порядок — по рядам.
+            let icons = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
+            let unordered = icons.map(position)
+            let order = DesktopOrder.order(of: unordered, rowTolerance: rowTolerance(of: icons))
+            return (order.map { icons[$0] }, order.map { unordered[$0] })
+        }
         var items: [AXUIElement]
         var positions: [CGPoint?] = []
         if let rows = elements(attribute(viewElement, kAXRowsAttribute)) {
@@ -575,6 +588,34 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         return Self.outward(from: selected, count: items.count).first { self.cachedURL(at: $0, in: items) == url }
     }
 
+    /// Шаг стрелкой на рабочем столе: следующая картинка в порядке рядов — сразу выделением через AX.
+    /// Впереди картинок нет — стоим, как в остальных видах.
+    private func performDesktopStep(forward: Bool) {
+        guard let navigation, navigation.isSettled, isFinderReady, let focused = focusedViewElement() else { return }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard viewKind == .desktop, let (items, _, selected) = displayedItems() else { return }
+        let ticket = stepCount.withLock { $0 }
+        let sides = PrefetchWindow.sides(
+            of: selected, count: items.count, url: { self.cachedURL(at: $0, in: items) }, isImage: ImageDirectory.isImage,
+            forward: forward ? 1 : 0, backward: forward ? 0 : 1, limit: Self.lookaheadLimit
+        )
+        guard let target = forward ? sides.next : sides.previous,
+              let index = index(of: target, in: items, around: selected), setSelection(items[index]) else { return }
+        self.navigation = FinderNavigation(showing: target)
+        lastNeighbors = nil
+        onShow(target)
+        publishNeighbors(of: index, in: items, shown: target, ticket: ticket)
+    }
+
+    /// Допуск ряда на рабочем столе — полвысоты значка (у всех значков она одна, настройка Finder).
+    private func rowTolerance(of icons: [AXUIElement]) -> CGFloat {
+        var size = CGSize.zero
+        guard let icon = icons.first, let value = attribute(icon, kAXSizeAttribute), CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(value as! AXValue, .cgSize, &size), size.height > 0 else { return 32 }
+        return size.height / 2
+    }
+
     /// Индексы от `start` в обе стороны: start, +1, −1, +2, −2…
     nonisolated static func outward(from start: Int, count: Int) -> [Int] {
         guard (0..<count).contains(start) else { return [] }
@@ -607,7 +648,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         guard isFinderReady, let focused = focusedViewElement() else { return }
         viewKind = kind(of: focused)
         viewElement = focused
-        guard let (items, _, index) = displayedItems(), findURL(items[index], depth: 2) == url else {
+        // На рабочем столе не удаляем: поведение Finder после ⌘⌫ там прототипом не проверено.
+        guard viewKind != .desktop, let (items, _, index) = displayedItems(), findURL(items[index], depth: 2) == url else {
             onTrash(.notHere)
             return
         }
@@ -954,8 +996,17 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         case "IconView": return .icons
         case "GalleryView": return .gallery
         default:
+            let role = attribute(element, kAXRoleAttribute) as? String
             // Колонка — список без идентификатора.
-            return attribute(element, kAXRoleAttribute) as? String == kAXListRole ? .columns : .other
+            if role == kAXListRole { return .columns }
+            // Рабочий стол — группа прямо в области прокрутки приложения, без окна.
+            if role == kAXGroupRole, let area = self.element(attribute(element, kAXParentAttribute)),
+               attribute(area, kAXRoleAttribute) as? String == kAXScrollAreaRole,
+               let app = self.element(attribute(area, kAXParentAttribute)),
+               attribute(app, kAXRoleAttribute) as? String == kAXApplicationRole {
+                return .desktop
+            }
+            return .other
         }
     }
 

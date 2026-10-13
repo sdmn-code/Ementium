@@ -25,10 +25,40 @@ struct FinderViewKindTests {
         #expect(FinderViewKind.icons.finderKey(for: .up) == .left)
     }
 
-    // Рабочий стол — по сетке, как в Finder: значки там расставлены вручную.
+    // Прочие виды — стрелка как есть. Рабочий стол стрелок Finder не получает (шаг — выделение через AX).
     @Test(arguments: [ArrowKey.left, .right, .up, .down])
-    func desktopKeepsTheKey(key: ArrowKey) {
+    func otherKeepsTheKey(key: ArrowKey) {
         #expect(FinderViewKind.other.finderKey(for: key) == key)
+        #expect(FinderViewKind.desktop.finderKey(for: key) == key)
+    }
+}
+
+/// Рабочий стол — по рядам, как текст (решение Саши); в AX значки идут вперемешку.
+struct DesktopOrderTests {
+    // Раскладка Саши: три столбца у правого края (x = 1364, 1488, 1612), ряды через 112 пт.
+    @Test func gridByRows() {
+        let positions: [CGPoint?] = [
+            CGPoint(x: 1612, y: 42), CGPoint(x: 1488, y: 602), CGPoint(x: 1488, y: 714), CGPoint(x: 1488, y: 378),
+            CGPoint(x: 1612, y: 378), CGPoint(x: 1364, y: 42), CGPoint(x: 1488, y: 42),
+        ]
+        #expect(DesktopOrder.order(of: positions, rowTolerance: 32) == [5, 6, 0, 3, 4, 1, 2])
+    }
+
+    // Расставленные вручную: в ряду y чуть разные — всё равно один ряд, слева направо.
+    @Test func jitteredRow() {
+        let positions: [CGPoint?] = [CGPoint(x: 230, y: 97), CGPoint(x: 10, y: 100), CGPoint(x: 120, y: 104)]
+        #expect(DesktopOrder.order(of: positions, rowTolerance: 32) == [1, 2, 0])
+    }
+
+    // Ряд ниже допуска — уже следующий, даже если значок левее.
+    @Test func nextRowEvenIfLeft() {
+        let positions: [CGPoint?] = [CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 0)]
+        #expect(DesktopOrder.order(of: positions, rowTolerance: 32) == [1, 0])
+    }
+
+    @Test func withoutPositionGoesLast() {
+        let positions: [CGPoint?] = [nil, CGPoint(x: 0, y: 0)]
+        #expect(DesktopOrder.order(of: positions, rowTolerance: 32) == [1, 0])
     }
 }
 

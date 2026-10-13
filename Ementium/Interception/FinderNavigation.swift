@@ -21,17 +21,40 @@ nonisolated enum ArrowKey: UInt16, Sendable {
 
 /// Вид окна Finder — от него зависит, какой стрелкой двигать выделение.
 nonisolated enum FinderViewKind: Sendable, Equatable {
-    case list, columns, icons, gallery, other
+    case list, columns, icons, gallery, desktop, other
 
     /// Клавиша, которую получит Finder в ответ на стрелку пользователя.
     /// В списке и колонках вперёд — вниз; в галерее и значках — вправо (в значках путь через ряды
-    /// прокладывает `IconGridPath`); на рабочем столе стрелки идут как есть — значки там расставлены вручную.
+    /// прокладывает `IconGridPath`). На рабочем столе стрелки Finder не шлются вовсе: мост сразу выделяет
+    /// следующую картинку в порядке рядов (`DesktopOrder`).
     func finderKey(for key: ArrowKey) -> ArrowKey {
         switch self {
         case .list, .columns: key.isForward ? .down : .up
         case .gallery, .icons: key.isForward ? .right : .left
-        case .other: key
+        case .desktop, .other: key
         }
+    }
+}
+
+/// Порядок значков рабочего стола — по рядам, как текст: сверху вниз, в ряду слева направо (решение Саши).
+/// Значки там стоят где угодно, а стрелка Finder идёт по пространству и на следующий ряд не переносится.
+/// Ряд — значки, чьи верхние края расходятся не больше чем на `rowTolerance`: у расставленных вручную
+/// y чуть разные. Элементы без координат — в конце.
+nonisolated enum DesktopOrder {
+    static func order(of positions: [CGPoint?], rowTolerance: CGFloat) -> [Int] {
+        let placed = positions.enumerated()
+            .compactMap { index, point in point.map { (index: index, point: $0) } }
+            .sorted { $0.point.y < $1.point.y }
+        var rows: [[(index: Int, point: CGPoint)]] = []
+        for icon in placed {
+            if let top = rows.last?.first?.point.y, icon.point.y - top <= rowTolerance {
+                rows[rows.count - 1].append(icon)
+            } else {
+                rows.append([icon])
+            }
+        }
+        let unplaced = positions.indices.filter { positions[$0] == nil }
+        return rows.flatMap { row in row.sorted { $0.point.x < $1.point.x }.map(\.index) } + unplaced
     }
 }
 
