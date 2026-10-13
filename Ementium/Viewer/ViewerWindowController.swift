@@ -96,7 +96,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private static let spinnerDelayDuration = Duration.milliseconds(300)
     private let log = Logger(subsystem: "io.github.sdmn-code.Ementium", category: "viewer")
 
-    private static let fadeDuration = 0.15
+    /// Появление и исчезновение просмотра (настройка «Плавное появление и исчезновение»): за 0,15 с затухание
+    /// на тёмном оверлее было незаметно.
+    private static let fadeDuration = 0.35
 
     var isFollowing: Bool { mode == .following && state == .visible }
 
@@ -345,6 +347,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         }
         // Из .closing продолжаем с текущей прозрачности, без мигания.
         state = .visible
+        panel.ignoresMouseEvents = false
         let following = mode == .following
         // Пока просмотр открыт, Пробел должен закрывать его, а не открывать снова;
         // в режиме «следовать» все нажатия разбирает перехват.
@@ -370,6 +373,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         guard state == .visible else { return }
         if mode == .following { onFollowingEnded?() }
         state = .closing
+        // Гаснущая панель ещё лежит поверх всех окон — клики и прокрутка должны уходить сквозь неё.
+        panel.ignoresMouseEvents = true
         // Через некоторое время сервис декодирования отпускается и завершается — с кэшами декодеров.
         DecoderClient.shared.releaseSoon()
         interception.update {
