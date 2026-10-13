@@ -9,7 +9,9 @@ The interface is in English and Russian (follows the system language). Detailed 
 ## Features
 
 - Space in Finder opens the selected image; arrows browse in Finder's order (any sorting, groups, Recents, search results). Documents between images are skipped, and Finder's selection follows the viewer.
-- Zoom with `+`/`-`, pinch, double-tap; pan with two fingers or by dragging. Each image remembers its zoom until the viewer closes (optional).
+- Two-finger swipe on the trackpad browses too: the image follows your fingers, like in Photos.
+- Zoom with `+`/`-`, pinch, double-tap; pan with two fingers or by dragging. Each image remembers its zoom and rotation until the viewer closes (optional).
+- Rotate the view by 90° (the file isn't changed), copy the file with `⌘C`, open it in its default app with `⌘O`.
 - RAW (CR2, CR3, NEF, ARW, DNG, …) shows the embedded preview instantly, then the full decode. SVG is rendered as a vector. Animated GIF, WebP, APNG, HEICS and AVIF play in a loop.
 - Hold `⌥` for photo info: camera, lens, exposure, date, location.
 - Optional: `⌘⌫` moves the image to the Trash through Finder (undo with `⌘Z`).
@@ -33,10 +35,15 @@ To uninstall: quit Ementium (menu bar icon or settings), delete it from Applicat
 |---|---|
 | `Space` in Finder | Open the selected image |
 | `→` / `↓`, `←` / `↑` | Next / previous image, in Finder's order |
+| Two-finger swipe left / right | Next / previous image (at fit) |
+| `Home` / `End` | First / last image |
 | `Esc`, `Space` | Close |
 | `+` / `-` / `0` (with or without `⌘`) | Zoom in / out / fit |
 | Hold `⌥` | Photo info |
 | `⌘⌫` / `⌘Z` | Move to Trash / undo (if enabled) |
+| `⌘→` / `⌘←` (or `⌘R` / `⌘L`) | Rotate the view clockwise / counterclockwise |
+| `⌘C` | Copy the file, as in Finder |
+| `⌘O` | Open in the default app |
 | `⌘,` | Settings |
 | `⌘Q` | Quit Ementium |
 
