@@ -44,7 +44,10 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 DMG="$OUT/Ementium-$VERSION.dmg"
-hdiutil create -volname "Ementium $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" > /dev/null
+# `hdiutil create` на macOS 27 устарел — `diskutil image create`; том внутри образа — APFS.
+# Прогресс он пишет в поток ошибок — показываем вывод, только если не вышло.
+DMG_LOG=$(diskutil image create from --format UDZO --volumeName "Ementium $VERSION" "$STAGE" "$DMG" 2>&1) \
+  || { print -r -- "$DMG_LOG"; echo "✗ DMG не создан"; exit 1; }
 hdiutil verify "$DMG" > /dev/null
 (cd "$OUT" && shasum -a 256 "${DMG:t}" > "${DMG:t}.sha256")
 echo "✓ $DMG ($(du -h "$DMG" | cut -f1))"

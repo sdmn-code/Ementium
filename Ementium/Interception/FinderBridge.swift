@@ -75,6 +75,10 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// занимало 100–250 мс. Только для соседей и поиска цели смахивания: выделяемый файл всегда сверяется
     /// с Finder заново. Сбрасывается при новом просмотре, другом виде и другом числе элементов.
     private var itemURLs: (view: AXUIElement, count: Int, urls: [Int: URL?])?
+    /// Порядок значков рабочего стола на время просмотра: координаты — отдельный запрос к Finder на каждый
+    /// значок, и при зажатой стрелке шаги шли бы чаще, чем мост успевал бы их читать. Сбрасывается при новом
+    /// просмотре, другом виде, другом числе значков и если выделенного в нём не нашлось (значки переставили).
+    private var desktopOrder: (view: AXUIElement, count: Int, items: [AXUIElement], positions: [CGPoint?])?
     /// Счётчик нажатий стрелок. Увеличивается на потоке перехвата **до** постановки шага в очередь моста,
     /// чтобы чтение соседей, которое идёт на потоке моста, увидело нажатие и прервалось.
     private let stepCount = OSAllocatedUnfairLock(initialState: 0)
@@ -166,6 +170,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.edgeTimer?.invalidate()
             self.lastNeighbors = nil
             self.itemURLs = nil
+            self.desktopOrder = nil
             self.trashed.removeAll()
             self.cancelTrash()
             self.scheduleNeighbors()
@@ -180,6 +185,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.neighborTimer?.invalidate()
             self.swipeSelectTimer?.invalidate()
             self.itemURLs = nil
+            self.desktopOrder = nil
             self.trashed.removeAll()
             self.cancelTrash()
             self.execute(self.navigation?.finish() ?? [])
@@ -220,6 +226,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         thread.perform {
             self.lastNeighbors = nil
             self.itemURLs = nil
+            self.desktopOrder = nil
             self.scheduleNeighbors()
         }
     }
@@ -343,13 +350,13 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         pendingTrash?.invalidate()
         pendingTrash = nil
         guard let current = navigation, !current.isFinishing, trashOperation == nil else { return }
-        neighborTimer?.invalidate()
         // Рабочий стол: стрелка Finder там идёт по пространству и на следующий ряд не переносится — стрелок не
         // шлём, а сразу выделяем следующую картинку в порядке рядов.
         if viewKind == .desktop {
             performDesktopStep(forward: key.isForward)
             return
         }
+        neighborTimer?.invalidate()
         // Пока пачка в полёте, Finder стоит где-то посреди документов: заглянув оттуда, мы отправили бы
         // вторую пачку и перелетели цель. Откладываем нажатие до показа картинки.
         if current.isJumping {
@@ -432,11 +439,20 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Элементы вида в экранном порядке, их положения (только для значков, галереи и рабочего стола) и индекс
     /// выделенного. `nil` — заглянуть нельзя (группы в значках, выделенный не найден).
     private func displayedItems() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
-        guard let viewElement, let (items, positions) = orderedItems(),
+        guard let viewElement,
               let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
-                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first,
-              let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
-        return (items, positions, start)
+                ?? elements(attribute(viewElement, kAXSelectedChildrenAttribute))?.first else { return nil }
+        func locate() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
+            guard let (items, positions) = orderedItems(),
+                  let start = items.firstIndex(where: { CFEqual($0, selected) }) else { return nil }
+            return (items, positions, start)
+        }
+        if let found = locate() { return found }
+        // Рабочий стол: запомненный порядок устарел (значки переставили) — читаем заново.
+        guard viewKind == .desktop, desktopOrder != nil else { return nil }
+        log.info("Рабочий стол: выделенного нет в запомненном порядке значков — читаю заново")
+        desktopOrder = nil
+        return locate()
     }
 
     /// Элементы вида в экранном порядке и их положения (только для значков и галереи).
@@ -445,9 +461,16 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         if viewKind == .desktop {
             // Значки — прямые дети группы рабочего стола, в AX вперемешку; порядок — по рядам.
             let icons = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
+            if let cached = desktopOrder, CFEqual(cached.view, viewElement), cached.count == icons.count {
+                return (cached.items, cached.positions)
+            }
             let unordered = icons.map(position)
             let order = DesktopOrder.order(of: unordered, rowTolerance: rowTolerance(of: icons))
-            return (order.map { icons[$0] }, order.map { unordered[$0] })
+            let ordered = (items: order.map { icons[$0] }, positions: order.map { unordered[$0] })
+            desktopOrder = (viewElement, icons.count, ordered.items, ordered.positions)
+            // Порядок новый — запомненные файлы по местам к нему не относятся.
+            itemURLs = nil
+            return ordered
         }
         var items: [AXUIElement]
         var positions: [CGPoint?] = []
@@ -588,20 +611,32 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         return Self.outward(from: selected, count: items.count).first { self.cachedURL(at: $0, in: items) == url }
     }
 
-    /// Шаг стрелкой на рабочем столе: следующая картинка в порядке рядов — сразу выделением через AX.
-    /// Впереди картинок нет — стоим, как в остальных видах.
+    /// Шаг стрелкой на рабочем столе: следующая картинка в порядке рядов — сразу выделением через AX. Считается
+    /// от того, что выделено в Finder сейчас, поэтому автомат стрелок здесь не нужен: даже если выделение
+    /// ушло на не-картинку, стрелка приведёт к ближайшей картинке. Впереди картинок нет — стоим, как в остальных видах.
     private func performDesktopStep(forward: Bool) {
-        guard let navigation, navigation.isSettled, isFinderReady, let focused = focusedViewElement() else { return }
+        guard isFinderReady, let focused = focusedViewElement() else {
+            log.debug("Рабочий стол: шаг пропущен — Finder не готов")
+            return
+        }
         viewKind = kind(of: focused)
         viewElement = focused
-        guard viewKind == .desktop, let (items, _, selected) = displayedItems() else { return }
+        guard viewKind == .desktop, let (items, _, selected) = displayedItems() else {
+            log.debug("Рабочий стол: шаг пропущен — не прочитал значки или выделение")
+            return
+        }
         let ticket = stepCount.withLock { $0 }
         let sides = PrefetchWindow.sides(
             of: selected, count: items.count, url: { self.cachedURL(at: $0, in: items) }, isImage: ImageDirectory.isImage,
             forward: forward ? 1 : 0, backward: forward ? 0 : 1, limit: Self.lookaheadLimit
         )
-        guard let target = forward ? sides.next : sides.previous,
-              let index = index(of: target, in: items, around: selected), setSelection(items[index]) else { return }
+        guard let target = forward ? sides.next : sides.previous else { return }
+        guard let index = index(of: target, in: items, around: selected), setSelection(items[index]) else {
+            log.debug("Рабочий стол: не удалось выделить следующую картинку")
+            return
+        }
+        // Чтение соседей прежней картинки больше не нужно — соседи новой отправятся ниже.
+        neighborTimer?.invalidate()
         self.navigation = FinderNavigation(showing: target)
         lastNeighbors = nil
         onShow(target)

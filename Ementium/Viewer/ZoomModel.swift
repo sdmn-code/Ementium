@@ -126,11 +126,21 @@ nonisolated struct ZoomModel: Equatable {
         scale = fitScale
     }
 
-    /// Повернуть на 90° (`⌘→` / `⌘←`) — и «вписать»: прежний масштаб и сдвиг к повёрнутой картинке не подходят.
+    /// Повернуть на 90° (`⌘→` / `⌘←`), как в Просмотре: «вписать» остаётся «вписать», увеличенная — в том же
+    /// масштабе, и в центре экрана остаётся та же точка снимка.
     mutating func rotate(clockwise: Bool) {
+        let wasFit = isFit
         quarterTurns = (quarterTurns + (clockwise ? 1 : 3)) % 4
-        scale = fitScale
-        offset = .zero
+        guard !wasFit else {
+            scale = fitScale
+            offset = .zero
+            return
+        }
+        // Точка снимка в центре экрана — на −offset от центра картинки; картинка поворачивается вокруг своего
+        // центра, и сдвиг поворачивается вместе с ней: по часовой (x, y) → (y, −x) (ось y вверх, как у NSView).
+        offset = clockwise ? CGPoint(x: offset.y, y: -offset.x) : CGPoint(x: -offset.y, y: offset.x)
+        scale = min(max(scale, fitScale), maximumScale)
+        clampOffset()
     }
 
     /// Запомненные масштаб, сдвиг и поворот (вернулись к картинке) — в нынешних пределах и без ухода краёв внутрь.

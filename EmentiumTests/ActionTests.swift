@@ -62,13 +62,43 @@ struct RotationTests {
 
     @Test func rotationSwapsSidesAndFits() {
         var zoom = ZoomModel(imageSize: CGSize(width: 4000, height: 2000), viewSize: screen)
-        zoom.zoomIn()
         zoom.rotate(clockwise: true)
         #expect(zoom.quarterTurns == 1)
         #expect(zoom.imageSize == CGSize(width: 2000, height: 4000))
         #expect(zoom.isFit)
         #expect(zoom.imageRect.height == 800)  // вертикальная теперь вписывается по высоте
         #expect(zoom.offset == .zero)
+    }
+
+    /// 100 % и сдвиг (300, 100): в центре экрана — точка на 300 пт левее и на 100 пт ниже центра снимка.
+    private func zoomedIn() -> ZoomModel {
+        var zoom = ZoomModel(imageSize: CGSize(width: 4000, height: 2000), viewSize: screen)
+        zoom.zoomIn()  // 50 %
+        zoom.zoomIn()  // 100 %
+        zoom.pan(by: CGVector(dx: 300, dy: 100))
+        return zoom
+    }
+
+    // Увеличенная поворачивается в том же масштабе (решение Саши), в центре — та же точка снимка.
+    @Test func zoomSurvivesRotation() {
+        var zoom = zoomedIn()
+        #expect(zoom.scale == 1)
+        #expect(zoom.offset == CGPoint(x: 300, y: 100))
+        zoom.rotate(clockwise: true)
+        #expect(zoom.scale == 1)
+        #expect(!zoom.isFit)
+        #expect(zoom.offset == CGPoint(x: 100, y: -300))
+
+        var back = zoomedIn()
+        back.rotate(clockwise: false)
+        #expect(back.offset == CGPoint(x: -100, y: 300))
+    }
+
+    @Test func rotationThereAndBackKeepsPlace() {
+        var zoom = zoomedIn()
+        zoom.rotate(clockwise: true)
+        zoom.rotate(clockwise: false)
+        #expect(zoom == zoomedIn())
     }
 
     @Test func fourTurnsReturnToStart() {
