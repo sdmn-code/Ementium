@@ -475,8 +475,8 @@ struct FollowingKeyPolicyTests {
     static let finderShortcuts: [(UInt16, CGEventFlags)] = [
         (36, []),                                             // Return — переименование
         (0, []),                                              // буква — поиск по имени
-        (51, .maskCommand),                                   // ⌘⌫ — в Корзину
         (51, [.maskCommand, .maskAlternate]),                 // ⌥⌘⌫ — удалить немедленно
+        (51, [.maskCommand, .maskShift]),                     // ⇧⌘⌫ — очистить Корзину
         (51, [.maskCommand, .maskShift, .maskAlternate]),     // ⌥⇧⌘⌫ — очистить Корзину без вопросов
         (45, [.maskControl, .maskCommand]),                   // ⌃⌘N — новая папка с выбранным
         (9, [.maskCommand, .maskAlternate]),                  // ⌥⌘V — переместить сюда
@@ -492,6 +492,11 @@ struct FollowingKeyPolicyTests {
     @Test(arguments: finderShortcuts)
     func finderShortcutsAreSwallowed(keyCode: UInt16, flags: CGEventFlags) {
         #expect(action(keyCode, nil, flags) == .swallow)
+    }
+
+    // ⌘⌫ без настройки «В Корзину» тоже не доходит до Finder — но с подсказкой, где её включить.
+    @Test func commandDeleteWithoutSettingHints() {
+        #expect(action(51, nil, .maskCommand) == .trashOff)
     }
 }
 

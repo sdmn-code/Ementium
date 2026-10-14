@@ -1,6 +1,36 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "1. macOS will show a request.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1. macOS покажет запрос."
+          }
+        }
+      }
+    },
+    "2. In System Settings, turn on Ementium.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2. В Системных настройках включите Ementium."
+          }
+        }
+      }
+    },
+    "3. That's it — no need to restart Ementium.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3. Всё — перезапускать Ementium не нужно."
+          }
+        }
+      }
+    },
     "About": {
       "localizations": {
         "ru": {
@@ -11,22 +41,12 @@
         }
       }
     },
-    "Accessibility access needed": {
+    "Background": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Нужен «Универсальный доступ»"
-          }
-        }
-      }
-    },
-    "Allow": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Разрешить"
+            "value": "Фон"
           }
         }
       }
@@ -47,16 +67,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Затемнение фона"
-          }
-        }
-      }
-    },
-    "Background sample": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Образец фона"
           }
         }
       }
@@ -87,6 +97,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Здесь удалить нельзя — удалите в Finder"
+          }
+        }
+      }
+    },
+    "Changes apply the next time the viewer opens.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Изменения применяются при следующем открытии просмотра."
+          }
+        }
+      }
+    },
+    "Continue…": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Продолжить…"
+          }
+        }
+      }
+    },
+    "Controls": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Управление"
           }
         }
       }
@@ -131,12 +171,22 @@
         }
       }
     },
-    "Couldn't start interception": {
+    "Couldn't start": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Не удалось включить перехват"
+            "value": "Не удалось запуститься"
+          }
+        }
+      }
+    },
+    "Deleting": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удаление"
           }
         }
       }
@@ -151,32 +201,52 @@
         }
       }
     },
-    "Done: select an image in Finder and press Space.": {
+    "Done. In Finder, select an image and press Space. Esc closes, arrows browse.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Готово: выделите картинку в Finder и нажмите Пробел."
+            "value": "Готово. Выделите картинку в Finder и нажмите Пробел. Esc закрывает, стрелки листают."
           }
         }
       }
     },
-    "Ementium Settings": {
+    "Ementium opens images with Space in Finder. For that, it needs to notice Space and see which file is selected — macOS allows this only with your permission. Ementium works only in Finder, sends nothing over the network and doesn't record keystrokes.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ementium — настройки"
+            "value": "Ementium открывает картинки по Пробелу в Finder. Для этого ему нужно замечать Пробел и видеть, какой файл выделен, — macOS даёт такую возможность только с вашего разрешения. Ementium работает только в Finder, ничего не отправляет в сеть и не записывает нажатия клавиш."
           }
         }
       }
     },
-    "Enlarge small images to fit the screen": {
+    "Ementium runs in the background": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Увеличивать маленькие картинки до размера экрана"
+            "value": "Ementium работает в фоне"
+          }
+        }
+      }
+    },
+    "Enlarge small images": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Увеличивать маленькие картинки"
+          }
+        }
+      }
+    },
+    "Esc closes only the viewer. After quitting, Space opens Quick Look again.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esc закрывает только просмотр. После завершения Пробел снова открывает Быстрый просмотр."
           }
         }
       }
@@ -231,6 +301,16 @@
         }
       }
     },
+    "Hold ⌥ in the viewer to show it.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удерживайте ⌥ в просмотре, чтобы их показать."
+          }
+        }
+      }
+    },
     "Image is still loading": {
       "localizations": {
         "ru": {
@@ -241,32 +321,42 @@
         }
       }
     },
-    "Image size on screen": {
+    "Kept until the viewer closes.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Размер изображения на экране"
+            "value": "Помнится, пока открыт просмотр."
           }
         }
       }
     },
-    "Intercept Space in Finder": {
+    "Keyboard": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Перехватывать Пробел в Finder"
+            "value": "Клавиатура"
           }
         }
       }
     },
-    "Interception is off": {
+    "Large image size": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Перехват выключен"
+            "value": "Размер крупных картинок"
+          }
+        }
+      }
+    },
+    "Move to Trash with ⌘⌫": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перемещать в Корзину по ⌘⌫"
           }
         }
       }
@@ -281,12 +371,12 @@
         }
       }
     },
-    "No Accessibility access": {
+    "Moving to Trash is off — turn it on in Settings": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Нет доступа к «Универсальному доступу»"
+            "value": "Перемещение в Корзину выключено — включите в настройках"
           }
         }
       }
@@ -321,42 +411,22 @@
         }
       }
     },
-    "Once access is granted, interception starts by itself — no need to restart Ementium.": {
+    "Open Images with Space in Finder": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "После выдачи доступа перехват включится сам, перезапускать Ementium не нужно."
+            "value": "Открывать картинки по Пробелу в Finder"
           }
         }
       }
     },
-    "Open": {
+    "Open System Settings…": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Открыть"
-          }
-        }
-      }
-    },
-    "Open Accessibility Settings": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Открыть настройки доступа"
-          }
-        }
-      }
-    },
-    "Open Accessibility Settings…": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Открыть настройки доступа…"
+            "value": "Открыть Системные настройки…"
           }
         }
       }
@@ -371,6 +441,36 @@
         }
       }
     },
+    "Open images with Space in Finder": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открывать картинки по Пробелу в Finder"
+          }
+        }
+      }
+    },
+    "Other files open in Quick Look as usual.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остальные файлы открываются в Быстром просмотре, как обычно."
+          }
+        }
+      }
+    },
+    "Paused — Space opens Quick Look": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пауза — Пробел открывает Быстрый просмотр"
+          }
+        }
+      }
+    },
     "Permission": {
       "localizations": {
         "ru": {
@@ -381,12 +481,22 @@
         }
       }
     },
-    "Photo info (hold ⌥)": {
+    "Photo info": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Сведения о снимке (удерживайте ⌥)"
+            "value": "Сведения о снимке"
+          }
+        }
+      }
+    },
+    "Position": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Положение"
           }
         }
       }
@@ -396,17 +506,27 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Выйти из Ementium"
+            "value": "Завершить Ementium"
           }
         }
       }
     },
-    "Remember zoom for each image": {
+    "Remember zoom and rotation for each image": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Запоминать масштаб каждой картинки"
+            "value": "Запоминать масштаб и поворот каждой картинки"
+          }
+        }
+      }
+    },
+    "Report an Issue": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщить об ошибке"
           }
         }
       }
@@ -441,12 +561,32 @@
         }
       }
     },
+    "Share of the screen for images that don't fit.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доля экрана для картинок, которые не помещаются."
+          }
+        }
+      }
+    },
     "Show icon in menu bar": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Показывать иконку в строке меню"
+          }
+        }
+      }
+    },
+    "Size": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размер"
           }
         }
       }
@@ -471,12 +611,22 @@
         }
       }
     },
-    "Space interception is on": {
+    "Space opens images in Ementium": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Перехват Пробела работает"
+            "value": "Пробел открывает картинки в Ementium"
+          }
+        }
+      }
+    },
+    "Stretch them to the large image size; otherwise they open at actual size.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Растягивать до размера крупных; иначе они открываются в натуральном размере."
           }
         }
       }
@@ -511,12 +661,12 @@
         }
       }
     },
-    "To open images with Space instead of Quick Look, Ementium intercepts Space in Finder and reads which file is selected. macOS won't allow this without Accessibility permission. Ementium sends nothing over the network and doesn't record keystrokes.": {
+    "The image on screen goes to the Trash through Finder, and the next one opens. Only when it was opened with Space in Finder, not on the Desktop. Undo: ⌘Z in the viewer or later in Finder.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Чтобы открывать картинки по Пробелу вместо Quick Look, Ementium перехватывает Пробел в Finder и читает, какой файл выделен. Без разрешения «Универсальный доступ» macOS этого не позволит. Ementium ничего не отправляет в сеть и не записывает нажатия клавиш."
+            "value": "Показанная картинка уходит в Корзину через Finder, и открывается следующая. Только если она открыта Пробелом в Finder, не на рабочем столе. Вернуть: ⌘Z в просмотре или позже в Finder."
           }
         }
       }
@@ -561,22 +711,42 @@
         }
       }
     },
-    "When the image was opened with Space in Finder. Undo with ⌘Z while the viewer is open, or ⌘Z in Finder.": {
+    "Waiting for permission": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Когда картинка открыта Пробелом в Finder. Вернуть — ⌘Z, пока просмотр открыт, или ⌘Z в Finder."
+            "value": "Ждёт разрешения"
           }
         }
       }
     },
-    "macOS is waiting for approval in Login Items": {
+    "Waiting for your approval in System Settings.": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "macOS ждёт подтверждения в «Объектах входа»"
+            "value": "Ждёт вашего подтверждения в Системных настройках."
+          }
+        }
+      }
+    },
+    "Without the icon, open Settings by launching Ementium again.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Без иконки настройки открываются повторным запуском Ementium."
+          }
+        }
+      }
+    },
+    "Zoom": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Масштаб"
           }
         }
       }
@@ -587,16 +757,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "© 2026 Alexander Key. Лицензия MIT."
-          }
-        }
-      }
-    },
-    "⌘⌫ moves to Trash": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "⌘⌫ перемещает в Корзину"
           }
         }
       }

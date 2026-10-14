@@ -27,16 +27,20 @@ struct LocalizationTests {
         }
     }
 
-    // Каждый String(localized: "...") в коде приложения есть в каталоге.
-    @Test func everyLocalizedStringIsInCatalog() throws {
-        let strings = try catalog("Ementium/Localizable.xcstrings")
-        let files = FileManager.default.enumerator(at: root.appendingPathComponent("Ementium"), includingPropertiesForKeys: nil)?
+    private var appSources: [URL] {
+        FileManager.default.enumerator(at: root.appendingPathComponent("Ementium"), includingPropertiesForKeys: nil)?
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
-        let pattern = try NSRegularExpression(pattern: #"String\(localized: "((?:[^"\\]|\\.)*)"\)"#)
+    }
+
+    /// Ключи каталога, которые находит `pattern` (первая группа) в файлах, прошедших `filter`; сколько нашлось.
+    private func checkKeys(pattern: String, filter: (String) -> Bool = { _ in true }) throws -> Int {
+        let strings = try catalog("Ementium/Localizable.xcstrings")
+        let regex = try NSRegularExpression(pattern: pattern)
         var found = 0
-        for file in files {
+        for file in appSources {
             let text = try String(contentsOf: file, encoding: .utf8)
-            for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard filter(text) else { continue }
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let range = Range(match.range(at: 1), in: text) else { continue }
                 // Подстановки `\(...)` в каталоге — `%@`.
                 let key = String(text[range]).replacingOccurrences(
@@ -46,7 +50,23 @@ struct LocalizationTests {
                 if strings[key] == nil { Issue.record("\(file.lastPathComponent): «\(key)» нет в каталоге") }
             }
         }
+        return found
+    }
+
+    // Каждый String(localized: "...") в коде приложения есть в каталоге.
+    @Test func everyLocalizedStringIsInCatalog() throws {
+        let found = try checkKeys(pattern: #"String\(localized: "((?:[^"\\]|\\.)*)"\)"#)
         #expect(found > 20)
+    }
+
+    // Подписи SwiftUI — литералы `LocalizedStringKey`: в каталог их добавляют руками, и забытая показалась бы
+    // по-английски. `Text(verbatim:)` — не перевод и сюда не попадает.
+    @Test func everySwiftUILiteralIsInCatalog() throws {
+        let found = try checkKeys(
+            pattern: #"\b(?:(?:Text|Toggle|Button|Section|Link|LabeledContent|ColorPicker|Label|Picker)\(|(?:title|description): )"((?:[^"\\]|\\.)*)""#,
+            filter: { $0.contains("import SwiftUI") }
+        )
+        #expect(found > 30)
     }
 
     // В русском переводе карточки — русские слова (каталог сервиса подключён).

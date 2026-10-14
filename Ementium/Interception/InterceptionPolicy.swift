@@ -22,6 +22,8 @@ nonisolated enum ViewerKeyAction: Equatable {
     case openSettings
     /// `⌘⌫` — переместить показанную картинку в Корзину (через Finder).
     case trash
+    /// `⌘⌫`, а удаление выключено в настройках — подсказать, где включить (иначе клавиша «мёртвая»).
+    case trashOff
     /// `⌘Z` — вернуть удалённое в этом сеансе.
     case undoTrash
     /// `Home` / `End`: первая / последняя картинка в окне Finder.
@@ -114,10 +116,12 @@ nonisolated enum InterceptionPolicy {
             return .close
         case .openSettings?:
             return .openSettings
-        // Без настройки ⌘⌫ и ⌘Z проглатываются, как раньше: Finder за оверлеем не должен ничего удалять невидимо.
-        // Автоповтор — никогда: зажатый ⌘⌫ удалял бы папку по картинке, зажатый ⌘Z — возвращал бы всё подряд.
+        // Без настройки ⌘⌫ и ⌘Z до Finder не доходят: за оверлеем он не должен ничего удалять невидимо. На ⌘⌫ —
+        // подсказка, где включить. Автоповтор — никогда: зажатый ⌘⌫ удалял бы папку по картинке, зажатый ⌘Z —
+        // возвращал бы всё подряд.
         case .trash?:
-            return trashEnabled && !isRepeat ? .trash : .swallow
+            if isRepeat { return .swallow }
+            return trashEnabled ? .trash : .trashOff
         case .undo?:
             return trashEnabled && !isRepeat ? .undoTrash : .swallow
         case .first?:

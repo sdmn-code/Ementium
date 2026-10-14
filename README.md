@@ -25,9 +25,9 @@ The interface is in English and Russian (follows the system language). Detailed 
 
 1. Download `Ementium-1.1.dmg` from [Releases](https://github.com/sdmn-code/Ementium/releases) and drag Ementium into Applications.
 2. The app isn't notarized by Apple (no paid developer account yet), so macOS will refuse to open it the first time. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Ementium. Since macOS 15 the Control-click → Open shortcut no longer works for this.
-3. On first launch, Ementium explains why it needs **Accessibility** and offers a button to grant it. Interception starts by itself once access is granted — no restart needed.
+3. On first launch, Ementium explains why it needs permission and offers a button to grant it: turn Ementium on in **System Settings → Privacy & Security → Device Control and Data Access** (called Accessibility before macOS 27). It starts working by itself — no restart needed.
 
-To uninstall: quit Ementium (menu bar icon or settings), delete it from Applications, and remove it from **Privacy & Security → Accessibility** and **General → Login Items**.
+To uninstall: quit Ementium (menu bar icon or settings), delete it from Applications, and remove it from **Privacy & Security → Device Control and Data Access** and **General → Login Items**.
 
 ## Keys
 
@@ -49,7 +49,7 @@ To uninstall: quit Ementium (menu bar icon or settings), delete it from Applicat
 
 ## Privacy and security
 
-Ementium never connects to the network and doesn't record keystrokes. It needs Accessibility to intercept Space in Finder and to read which file is selected. Image decoding runs in a separate sandboxed process (`EmentiumDecoder`) with no file or network access: the main app, which holds the Accessibility permission, never parses image files itself.
+Ementium never connects to the network and doesn't record keystrokes. It needs the Accessibility permission (Device Control and Data Access in macOS 27 System Settings) to intercept Space in Finder and to read which file is selected. Image decoding runs in a separate sandboxed process (`EmentiumDecoder`) with no file or network access: the main app, which holds the Accessibility permission, never parses image files itself.
 
 ## Building from source
 

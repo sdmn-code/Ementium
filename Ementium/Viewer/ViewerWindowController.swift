@@ -453,7 +453,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             onOpenSettings?()
         case .trash:
             // Удаление — через Finder, а здесь Finder не знает, что показано.
-            if preferences.trashEnabled { viewerView.showMessage(String(localized: "Deleting works when the image was opened with Space in Finder")) }
+            viewerView.showMessage(preferences.trashEnabled
+                ? String(localized: "Deleting works when the image was opened with Space in Finder")
+                : String(localized: "Moving to Trash is off — turn it on in Settings"))
         case .undo:
             break
         case .first, .last:

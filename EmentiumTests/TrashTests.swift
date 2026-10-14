@@ -105,21 +105,23 @@ struct TrashKeyTests {
 
     @Test func commandDeleteTrashesOnlyWhenEnabled() {
         #expect(action(51, nil, .maskCommand, enabled: true) == .trash)
-        #expect(action(51, nil, .maskCommand, enabled: false) == .swallow)
+        #expect(action(51, nil, .maskCommand, enabled: false) == .trashOff)  // подсказка, где включить
         // ⌥⌘⌫ — «Удалить немедленно» в Finder — по-прежнему проглатывается.
         #expect(action(51, nil, [.maskCommand, .maskAlternate], enabled: true) == .swallow)
     }
 
     // Зажатый ⌘⌫ не удаляет папку по картинке, зажатый ⌘Z не возвращает всё подряд.
     @Test func autorepeatNeverTrashesOrUndoes() {
-        func repeated(_ keyCode: UInt16, _ characters: String?) -> ViewerKeyAction {
+        func repeated(_ keyCode: UInt16, _ characters: String?, enabled: Bool = true) -> ViewerKeyAction {
             InterceptionPolicy.followingAction(
                 keyCode: keyCode, characters: characters, flags: .maskCommand, isRepeat: true,
-                systemShortcuts: [], trashEnabled: true
+                systemShortcuts: [], trashEnabled: enabled
             )
         }
         #expect(repeated(51, nil) == .swallow)
         #expect(repeated(6, "z") == .swallow)
+        // И подсказка «включите в настройках» не мигает на каждом повторе.
+        #expect(repeated(51, nil, enabled: false) == .swallow)
     }
 
     @Test func commandZUndoesOnlyWhenEnabled() {

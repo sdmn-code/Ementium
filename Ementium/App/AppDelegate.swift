@@ -115,11 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         permissions.waitForAccessibility { [weak self] in
             guard let self else { return }
+            let started = self.startInterception()
             if !self.settings.model.isAccessibilityGranted {
                 self.settings.model.isAccessibilityGranted = true
-                self.settings.model.justGranted = true
+                // «Готово» — тому, кто выдал доступ при открытом окне, и только если перехват заработал:
+                // через несколько дней или при сбое оно бы только запутало.
+                self.settings.model.justGranted = started && self.settings.isVisible
+                // «Готово» иначе осталось бы за Системными настройками, где только что выдали доступ.
+                self.settings.raiseIfVisible()
             }
-            self.startInterception()
         }
     }
 
@@ -208,6 +212,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     bridge.trash(url)
                 }
             }
+        case .trashOff:
+            viewer.showMessage(String(localized: "Moving to Trash is off — turn it on in Settings"))
         case .undoTrash:
             viewer.dropSwipeLead()
             bridge.undoTrash()
@@ -266,12 +272,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Перехват
 
-    private func startInterception() {
+    /// false — tap не создался; повторяем в фоне, пока не получится.
+    @discardableResult
+    private func startInterception() -> Bool {
         log.info("Доступ к Универсальному доступу есть, запускаю перехват")
         bridge.start()
         if interceptor.start() {
             statusMenu?.status = .running
-            return
+            return true
         }
         // Tap не создался при выданном доступе — возможно, нужен ещё «Мониторинг ввода».
         statusMenu?.status = .failed
@@ -290,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        return false
     }
 
     // MARK: - Finder

@@ -183,7 +183,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit, .zoom, .openSettings, .trash, .undoTrash, .edge, .rotate, .copy, .openInApp:
+        case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undoTrash, .edge, .rotate, .copy, .openInApp:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

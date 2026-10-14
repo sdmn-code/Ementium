@@ -20,6 +20,8 @@ nonisolated enum Preferences {
         static let trashWithCommandDelete = "trashWithCommandDelete"
         /// Угол карточки сведений о снимке (по `⌥`).
         static let infoPanelPosition = "infoPanelPosition"
+        /// Последняя открытая вкладка окна настроек (`SettingsPane`).
+        static let settingsPane = "settingsPane"
     }
 
     static var defaults: [String: Any] { [

@@ -9,7 +9,7 @@ final class PermissionsManager {
     var isAccessibilityGranted: Bool { AXIsProcessTrusted() }
 
     /// Ждёт выдачи доступа, проверяя раз в секунду, чтобы перехват включился без перезапуска.
-    /// Системный диалог сам не показывается — его вызывает кнопка «Разрешить» в окне настроек,
+    /// Системный диалог сам не показывается — его вызывает кнопка «Продолжить…» в окне настроек,
     /// где сначала объяснено, зачем доступ нужен.
     func waitForAccessibility(onGranted: @escaping () -> Void) {
         if AXIsProcessTrusted() {

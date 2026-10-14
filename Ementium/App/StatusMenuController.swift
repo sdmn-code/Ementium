@@ -45,20 +45,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         let statusText = switch status {
-        case .waitingForPermission: String(localized: "No Accessibility access")
-        case .failed: String(localized: "Couldn't start interception")
-        case .running: isEnabled ? String(localized: "Space interception is on") : String(localized: "Interception is off")
+        case .waitingForPermission: String(localized: "Waiting for permission")
+        case .failed: String(localized: "Couldn't start")
+        case .running: isEnabled ? String(localized: "Space opens images in Ementium") : String(localized: "Paused — Space opens Quick Look")
         }
         menu.addItem(NSMenuItem(title: statusText, action: nil, keyEquivalent: ""))
 
         if status != .running {
-            let settings = NSMenuItem(title: String(localized: "Open Accessibility Settings…"), action: #selector(openSettings), keyEquivalent: "")
+            let settings = NSMenuItem(title: String(localized: "Open System Settings…"), action: #selector(openSettings), keyEquivalent: "")
             settings.target = self
             menu.addItem(settings)
         }
 
         menu.addItem(.separator())
-        let toggle = NSMenuItem(title: String(localized: "Intercept Space in Finder"), action: #selector(toggle), keyEquivalent: "")
+        let toggle = NSMenuItem(title: String(localized: "Open Images with Space in Finder"), action: #selector(toggle), keyEquivalent: "")
         toggle.target = self
         toggle.state = isEnabled ? .on : .off
         menu.addItem(toggle)
