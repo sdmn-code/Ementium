@@ -7,6 +7,10 @@
 set -euo pipefail
 cd "${0:A:h}/.."
 
+# Оформление окна DMG (scripts/dmg_style.py) — на Python; проверяем до долгой сборки.
+python3 -c "import ds_store, mac_alias, PIL" 2>/dev/null \
+  || { echo "✗ Нужны модули Python: pip3 install ds_store mac_alias pillow"; exit 1; }
+
 OUT=build/release
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -43,11 +47,24 @@ STAGE="$OUT/dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
+python3 scripts/dmg_style.py background "$STAGE"
 DMG="$OUT/Ementium-$VERSION.dmg"
-# `hdiutil create` на macOS 27 устарел — `diskutil image create`; том внутри образа — APFS.
-# Прогресс он пишет в поток ошибок — показываем вывод, только если не вышло.
-DMG_LOG=$(diskutil image create from --format UDZO --volumeName "Ementium $VERSION" "$STAGE" "$DMG" 2>&1) \
-  || { print -r -- "$DMG_LOG"; echo "✗ DMG не создан"; exit 1; }
+RW="$OUT/rw.dmg"
+MNT="$OUT/mnt"
+# `hdiutil create` на macOS 27 устарел — `diskutil image`; том внутри образа — APFS. Прогресс diskutil пишет
+# в поток ошибок — показываем вывод, только если не вышло.
+dmg_step() { local LOG; LOG=$("$@" 2>&1) || { print -r -- "$LOG"; echo "✗ DMG не создан"; exit 1; } }
+# Раскладка окна (.DS_Store) ссылается на фон внутри тома — пишется в смонтированный образ на запись,
+# потом он сжимается.
+dmg_step diskutil image create from --format RAW --volumeName "Ementium $VERSION" "$STAGE" "$RW"
+mkdir -p "$MNT"
+dmg_step diskutil image attach --nobrowse --mountPoint "$MNT" "$RW"
+python3 scripts/dmg_style.py layout "$MNT" Ementium.app || { diskutil eject "$MNT" > /dev/null; exit 1; }
+sync
+dmg_step diskutil eject "$MNT"
+rmdir "$MNT"
+dmg_step diskutil image create from --format UDZO "$RW" "$DMG"
+rm -f "$RW"
 hdiutil verify "$DMG" > /dev/null
 (cd "$OUT" && shasum -a 256 "${DMG:t}" > "${DMG:t}.sha256")
 echo "✓ $DMG ($(du -h "$DMG" | cut -f1))"

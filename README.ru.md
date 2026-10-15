@@ -319,7 +319,7 @@ xcodebuild -project Ementium.xcodeproj -scheme Ementium -configuration Release \
   -destination 'generic/platform=macOS' build                    # Release (arm64)
 ```
 
-**Релиз:** `scripts/release.sh` — чистая Release-сборка, проверка подписи (hardened runtime у приложения и сервиса, нет отладочного права `get-task-allow`, у сервиса — песочница), DMG с ярлыком «Программы» (`diskutil image create`, том APFS) и SHA-256 в `build/release/`. Подпись — сертификат Apple Development; с Developer ID и нотаризацией (`notarytool`) Gatekeeper перестал бы предупреждать — это следующий шаг, когда появится платная подписка.
+**Релиз:** `scripts/release.sh` — чистая Release-сборка, проверка подписи (hardened runtime у приложения и сервиса, нет отладочного права `get-task-allow`, у сервиса — песочница), DMG с ярлыком «Программы» (`diskutil image`, том APFS) и SHA-256 в `build/release/`. Окно образа оформляет `scripts/dmg_style.py`: фон со стрелкой «Drag here» (TIFF 1x + 2x в скрытой `.background`), значки 128 pt, Ementium слева, «Программы» справа. Раскладку Finder хранит в `.DS_Store` — скрипт пишет его напрямую (модули `ds_store`, `mac_alias`, `pillow` — `pip3 install`), без AppleScript к Finder и разрешения «Автоматизация»; фон в нём — ссылка на файл внутри тома, поэтому сначала образ на запись, потом сжатие. Строку пути и расширения файлов Finder показывает по своим общим настройкам — из образа их не выключить. Подпись — сертификат Apple Development; с Developer ID и нотаризацией (`notarytool`) Gatekeeper перестал бы предупреждать — это следующий шаг, когда появится платная подписка.
 
 ## Структура проекта
 
