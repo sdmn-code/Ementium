@@ -18,6 +18,8 @@ nonisolated enum Preferences {
         static let animateViewer = "animateViewer"
         /// `⌘⌫` в просмотре перемещает картинку в Корзину (режим «следовать»). По умолчанию выключено.
         static let trashWithCommandDelete = "trashWithCommandDelete"
+        /// Распознавать текст и объекты по удержанию `⌘` (Live Text, «Поиск по изображению»).
+        static let liveText = "liveTextEnabled"
         /// Угол карточки сведений о снимке (по `⌥`).
         static let infoPanelPosition = "infoPanelPosition"
         /// Последняя открытая вкладка окна настроек (`SettingsPane`).
@@ -37,6 +39,7 @@ nonisolated enum Preferences {
         Key.animateViewer: true,
         Key.infoPanelPosition: InfoPanelPosition.topRight.rawValue,
         Key.trashWithCommandDelete: false,
+        Key.liveText: true,
     ] }
 
     static func register(in store: UserDefaults = .standard) {
@@ -56,6 +59,7 @@ nonisolated struct ViewerPreferences: Equatable {
     var animate: Bool
     var infoPosition: InfoPanelPosition
     var trashEnabled: Bool
+    var liveText: Bool
 
     init(from store: UserDefaults = .standard) {
         Preferences.register(in: store)
@@ -68,6 +72,7 @@ nonisolated struct ViewerPreferences: Equatable {
         animate = store.bool(forKey: Preferences.Key.animateViewer)
         infoPosition = store.string(forKey: Preferences.Key.infoPanelPosition).flatMap(InfoPanelPosition.init) ?? .topRight
         trashEnabled = store.bool(forKey: Preferences.Key.trashWithCommandDelete)
+        liveText = store.bool(forKey: Preferences.Key.liveText)
     }
 }
 

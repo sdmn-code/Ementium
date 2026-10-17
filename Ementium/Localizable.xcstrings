@@ -41,6 +41,16 @@
         }
       }
     },
+    "Added to Photos": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавлено в «Фото»"
+          }
+        }
+      }
+    },
     "Background": {
       "localizations": {
         "ru": {
@@ -167,6 +177,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Не удалось вернуть"
+          }
+        }
+      }
+    },
+    "Couldn't share": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось поделиться"
           }
         }
       }
@@ -301,6 +321,16 @@
         }
       }
     },
+    "Hold ⌘ in the viewer to select text and look up objects.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удерживайте ⌘ в просмотре, чтобы выделить текст или найти объект."
+          }
+        }
+      }
+    },
     "Hold ⌥ in the viewer to show it.": {
       "localizations": {
         "ru": {
@@ -347,6 +377,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Размер крупных картинок"
+          }
+        }
+      }
+    },
+    "Live Text": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Text"
+          }
+        }
+      }
+    },
+    "Live Text is off — turn it on in Settings": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Text выключен — включите в настройках"
+          }
+        }
+      }
+    },
+    "Look Up found nothing": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поиск по изображению ничего не нашёл"
           }
         }
       }
@@ -511,6 +571,16 @@
         }
       }
     },
+    "Recognize text and objects": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Распознавать текст и объекты"
+          }
+        }
+      }
+    },
     "Remember zoom and rotation for each image": {
       "localizations": {
         "ru": {
@@ -557,6 +627,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Настройки…"
+          }
+        }
+      }
+    },
+    "Share": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поделиться"
           }
         }
       }
@@ -627,6 +707,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Растягивать до размера крупных; иначе они открываются в натуральном размере."
+          }
+        }
+      }
+    },
+    "Text copied": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текст скопирован"
           }
         }
       }

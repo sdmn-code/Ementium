@@ -188,6 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleViewerKey(_ action: ViewerKeyAction) {
         switch action {
         case .close:
+            // Открыта карточка контакта или просмотр ссылки — `Esc` закрывает сначала их, как в своём списке.
+            if viewer.closeLiveWindows() { return }
+            endFollowing()
+        case .passAndClose:
+            // Сочетание уходит системе (Spotlight, Mission Control): просмотр закрывается целиком.
             endFollowing()
         case .quit:
             NSApp.terminate(nil)
@@ -226,7 +231,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewer.copyCurrent()
         case .openInApp:
             viewer.openCurrentInApp()
-        case .step, .pass, .passAndClose, .swallow:
+        case .lookUp:
+            viewer.lookUp()
+        case .share:
+            viewer.share()
+        case .step, .pass, .swallow:
             break
         }
     }

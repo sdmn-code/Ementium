@@ -178,12 +178,15 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .pass:
             return Unmanaged.passUnretained(event)
         case .passAndClose:
-            onViewerKey(.close)
+            // Не `.close`: тот сначала закрывает карточку или окно ссылки, а просмотр остался бы — и Spotlight
+            // открылся бы под ним.
+            onViewerKey(.passAndClose)
             return Unmanaged.passUnretained(event)
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undoTrash, .edge, .rotate, .copy, .openInApp:
+        case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undoTrash, .edge, .rotate, .copy, .openInApp,
+             .lookUp, .share:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

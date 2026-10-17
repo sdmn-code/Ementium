@@ -17,13 +17,17 @@ nonisolated enum ViewerCommand: Equatable {
     /// `Home` / `End` (на MacBook — `fn ←` / `fn →`): первая / последняя картинка.
     case first
     case last
-    /// `⌘→` / `⌘←` (и `⌘R` / `⌘L`, как в Просмотре): повернуть показ на 90°, файл не меняется.
+    /// `⌘→` / `⌘←`: повернуть показ на 90°, файл не меняется.
     case rotateClockwise
     case rotateCounterclockwise
-    /// `⌘C` — файл в буфер обмена, как в Finder.
+    /// `⌘C` — выделенный текст (Live Text), а без него — файл в буфер обмена, как в Finder.
     case copy
     /// `⌘O` — открыть в приложении по умолчанию.
     case openInApp
+    /// `⌘L` — «Поиск по изображению» (Visual Look Up).
+    case lookUp
+    /// `⌘S` — «Поделиться».
+    case share
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -42,8 +46,8 @@ nonisolated enum ViewerCommand: Equatable {
         static let comma: UInt16 = 43       // «,» (в русской раскладке «б» — та же клавиша)
         static let delete: UInt16 = 51      // ⌫
         static let qwertyZ: UInt16 = 6
-        static let qwertyR: UInt16 = 15
         static let qwertyL: UInt16 = 37
+        static let qwertyS: UInt16 = 1
         static let qwertyC: UInt16 = 8
         static let qwertyO: UInt16 = 31
         static let home: UInt16 = 115       // и fn ←
@@ -92,9 +96,9 @@ nonisolated enum ViewerCommand: Equatable {
             func letter(_ latin: String, _ code: UInt16) -> Bool {
                 character == latin || (!isLatinLetter && keyCode == code)
             }
-            if letter("r", KeyCode.qwertyR) { self = .rotateClockwise; return }
-            if letter("l", KeyCode.qwertyL) { self = .rotateCounterclockwise; return }
             if letter("c", KeyCode.qwertyC) { self = .copy; return }
+            if letter("l", KeyCode.qwertyL) { self = .lookUp; return }
+            if letter("s", KeyCode.qwertyS) { self = .share; return }
             if letter("o", KeyCode.qwertyO) { self = .openInApp; return }
             // ⌘Z — так же, как ⌘Q: по символу, а в нелатинской раскладке — по физическому коду.
             if character == "z" || (!isLatinLetter && keyCode == KeyCode.qwertyZ) {

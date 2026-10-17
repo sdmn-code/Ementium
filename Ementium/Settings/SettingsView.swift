@@ -132,6 +132,7 @@ struct ViewerPane: View {
     @AppStorage(Preferences.Key.upscaleSmallImages) private var upscaleSmallImages = false
     @AppStorage(Preferences.Key.animateViewer) private var animateViewer = true
     @AppStorage(Preferences.Key.infoPanelPosition) private var infoPosition = InfoPanelPosition.topRight.rawValue
+    @AppStorage(Preferences.Key.liveText) private var liveText = true
 
     var body: some View {
         Form {
@@ -157,6 +158,13 @@ struct ViewerPane: View {
                 Toggle(isOn: $upscaleSmallImages) {
                     Text("Enlarge small images")
                     Text("Stretch them to the large image size; otherwise they open at actual size.")
+                }
+            }
+            // Только распознавание: «Поделиться» по `⌘` работает и без него.
+            Section("Live Text") {
+                Toggle(isOn: $liveText) {
+                    Text("Recognize text and objects")
+                    Text("Hold ⌘ in the viewer to select text and look up objects.")
                 }
             }
             Section {

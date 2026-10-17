@@ -14,6 +14,8 @@ The interface is in English and Russian (follows the system language). Detailed 
 - Rotate the view by 90° (the file isn't changed), copy the file with `⌘C`, open it in its default app with `⌘O`.
 - RAW (CR2, CR3, NEF, ARW, DNG, …) shows the embedded preview instantly, then the full decode. SVG is rendered as a vector. Animated GIF, WebP, APNG, HEICS and AVIF play in a loop.
 - Hold `⌥` for photo info: camera, lens, exposure, date, location.
+- Hold `⌘` for Live Text: select and copy text from the image, click links, phone numbers and addresses; Visual Look Up with `⌘L`.
+- Share with `⌘S`: AirDrop, Messages, Add to Photos and other macOS services.
 - Optional: `⌘⌫` moves the image to the Trash through Finder (undo with `⌘Z`).
 - Neighbouring images are preloaded, so browsing is instant.
 
@@ -41,15 +43,18 @@ To uninstall: quit Ementium (menu bar icon or settings), delete it from Applicat
 | `+` / `-` / `0` (with or without `⌘`) | Zoom in / out / fit |
 | Hold `⌥` | Photo info |
 | `⌘⌫` / `⌘Z` | Move to Trash / undo (if enabled) |
-| `⌘→` / `⌘←` (or `⌘R` / `⌘L`) | Rotate the view clockwise / counterclockwise |
-| `⌘C` | Copy the file, as in Finder |
+| `⌘→` / `⌘←` | Rotate the view clockwise / counterclockwise |
+| Hold `⌘` | Live Text: select text, click links and phone numbers |
+| `⌘C` | Copy the selected text, otherwise the file (as in Finder) |
+| `⌘L` | Visual Look Up (where available) |
+| `⌘S` | Share |
 | `⌘O` | Open in the default app |
 | `⌘,` | Settings |
 | `⌘Q` | Quit Ementium |
 
 ## Privacy and security
 
-Ementium never connects to the network and doesn't record keystrokes. It needs the Accessibility permission (Device Control and Data Access in macOS 27 System Settings) to intercept Space in Finder and to read which file is selected. Image decoding runs in a separate sandboxed process (`EmentiumDecoder`) with no file or network access: the main app, which holds the Accessibility permission, never parses image files itself.
+Ementium itself never connects to the network and doesn't record keystrokes. Live Text recognizes text on your Mac; Visual Look Up and Share are macOS services and work as they do in Quick Look. It needs the Accessibility permission (Device Control and Data Access in macOS 27 System Settings) to intercept Space in Finder and to read which file is selected. Image decoding runs in a separate sandboxed process (`EmentiumDecoder`) with no file or network access: the main app, which holds the Accessibility permission, never parses image files itself.
 
 ## Building from source
 

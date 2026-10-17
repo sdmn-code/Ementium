@@ -254,6 +254,8 @@ struct ProcessBoundaryTests {
         let forbidden = [
             "CGImageSourceCreate", "CGAnimateImage", "CIRAWFilter", "NSImage(contentsOf", "NSImage(data",
             "ImageLoader.load(", "ImageLoader.decode(", "ImageMetadata.read(", "QLThumbnail",
+            // Live Text — только по пикселям, уже декодированным сервисом.
+            "analyze(imageAt",
         ]
         let files = FileManager.default.enumerator(at: appSources, includingPropertiesForKeys: nil)?
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []

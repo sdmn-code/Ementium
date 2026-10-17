@@ -14,9 +14,11 @@ struct NewKeysTests {
         #expect(command(119, nil, [.function]) == .last)                 // fn → на MacBook = End
         #expect(command(124, nil, [.command, .function, .numericPad]) == .rotateClockwise)
         #expect(command(123, nil, .command) == .rotateCounterclockwise)
-        #expect(command(15, "r", .command) == .rotateClockwise)          // ⌘R
-        #expect(command(37, "l", .command) == .rotateCounterclockwise)   // ⌘L
-        #expect(command(15, "к", .command) == .rotateClockwise)          // русская раскладка — по физической клавише
+        #expect(command(15, "r", .command) == nil)                       // ⌘R больше не поворачивает
+        #expect(command(37, "l", .command) == .lookUp)                   // ⌘L — поиск по изображению
+        #expect(command(37, "д", .command) == .lookUp)                   // русская раскладка — по физической клавише
+        #expect(command(1, "s", .command) == .share)                     // ⌘S — «Поделиться»
+        #expect(command(1, "ы", .command) == .share)
         #expect(command(8, "c", .command) == .copy)
         #expect(command(8, "с", .command) == .copy)                      // кириллическая «с»
         #expect(command(31, "o", .command) == .openInApp)
@@ -36,6 +38,9 @@ struct NewKeysTests {
         #expect(action(123, nil, .maskCommand) == .rotate(clockwise: false))
         #expect(action(8, "c", .maskCommand) == .copy)
         #expect(action(31, "o", .maskCommand) == .openInApp)
+        #expect(action(37, "l", .maskCommand) == .lookUp)
+        #expect(action(1, "s", .maskCommand) == .share)
+        #expect(action(15, "r", .maskCommand) == .swallow)  // ⌘R — не поворот, и до Finder не доходит
         // Обычные стрелки по-прежнему листают.
         #expect(action(124, nil, []) == .step(.right))
     }
@@ -45,6 +50,8 @@ struct NewKeysTests {
         #expect(action(124, nil, .maskCommand, repeat: true) == .swallow)
         #expect(action(8, "c", .maskCommand, repeat: true) == .swallow)
         #expect(action(31, "o", .maskCommand, repeat: true) == .swallow)
+        #expect(action(37, "l", .maskCommand, repeat: true) == .swallow)
+        #expect(action(1, "s", .maskCommand, repeat: true) == .swallow)
     }
 
     // Пользователь сам назначил ⌘→ в системных настройках — перехват пропускает.

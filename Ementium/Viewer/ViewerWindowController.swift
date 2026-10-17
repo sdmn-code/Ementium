@@ -1,4 +1,5 @@
 import AppKit
+import VisionKit
 import os
 
 /// Окно просмотра. Не активирует приложение (как Spotlight), поэтому активным остаётся то,
@@ -74,6 +75,44 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var detailFailed: Set<URL> = []
     /// Фоновая загрузка оригинала в полном разрешении (при увеличении сверх декодированного).
     private var detailTask: Task<Void, Never>?
+    /// Live Text по удержанию `⌘`: распознавание показанной картинки, кнопки VisionKit и «Поделиться».
+    private var liveHold = LiveTextHoldTracker()
+    private var liveTimer: Task<Void, Never>?
+    private var liveTask: Task<Void, Never>?
+    private let liveAnalyzer = LiveTextAnalyzer()
+    /// Что распознано: поверхность, поворот и часть картинки — по ним видно, распознавать ли заново (подгрузилась
+    /// деталь, повернули, увеличили или сдвинули видимое).
+    private struct LiveKey: Equatable {
+        let surface: ObjectIdentifier
+        let quarterTurns: Int
+        let crop: CGRect
+    }
+    private var liveKey: LiveKey?
+    private var isAnalyzing = false
+    /// Масштаб и сдвиг улеглись — в режиме распознать видимую часть заново.
+    private var liveViewSettle: Task<Void, Never>?
+    /// `⌘L`: открыть «Поиск по изображению», когда распознавание закончится.
+    private var lookUpPending = false
+    /// Открытое меню «Поделиться» и работающий сервис (окна AirDrop — свои, их не трогаем).
+    private var sharePicker: NSSharingServicePicker?
+    private var isSharing = false
+    /// Щелчки по просмотру — для окон VisionKit (карточка контакта, просмотр ссылки).
+    private var mouseMonitor: Any?
+    /// Окна VisionKit, уже записанные в журнал.
+    private var loggedAuxiliaryWindows: Set<ObjectIdentifier> = []
+    /// Всплывающие окна VisionKit — карточка контакта (`DDActionViewController`).
+    private var popovers: [NSPopover] = []
+    /// Просмотр ссылки показывает другой процесс; в режиме «следовать» — окном уровня 101, под панелью: его номер,
+    /// пока оно открыто.
+    private var foreignPreview: Int?
+    private var foreignPreviewWatch: Task<Void, Never>?
+    /// Закрыть просмотр ссылки уже попросили — окно ещё гаснет.
+    private var linkPreviewClosing = false
+    /// Щелчок, закрывший просмотр ссылки, поглощён — поглотить и его отпускание.
+    private var swallowsMouseUp = false
+    /// Режим «следовать»: панель взяла клавиатуру на время щелчка по «пилюле» — вернуть, когда появится просмотр
+    /// ссылки (или по таймеру).
+    private var keyboardLoan: Task<Void, Never>?
 
     /// Настройки на момент открытия просмотра.
     private var preferences = ViewerPreferences()
@@ -141,9 +180,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
         viewerView.swipeNeighbor = { [weak self] forward in self?.swipeNeighbor(forward: forward) ?? .none }
         viewerView.onSwipe = { [weak self] forward in self?.swiped(forward: forward) ?? false }
-        viewerView.onModifiersChanged = { [weak self] modifiers in self?.input(.modifiers(modifiers)) }
         viewerView.onKeyPressed = { [weak self] isArrow in self?.input(.keyPressed(isArrow: isArrow)) }
         viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
+        viewerView.onShare = { [weak self] in self?.share() }
+        viewerView.onLiveTextLatch = { [weak self] latched in self?.liveTextLatched(latched) }
+        viewerView.onViewChanged = { [weak self] in self?.liveViewChanged() }
 
         // `open -a` активирует Ementium, поэтому запоминаем, кто был активен до него,
         // чтобы вернуть фокус после закрытия.
@@ -156,6 +197,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     /// Открывает просмотр, который листается вслед за выделением Finder.
     func showFollowing(_ url: URL) {
+        resetLiveText()
         directoryTask?.cancel()
         isListPending = false
         pendingSteps = 0
@@ -251,7 +293,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func updateSpinner() {
-        guard isNavigationBusy || isDecoding || isLoadingDetail else {
+        guard isNavigationBusy || isDecoding || isLoadingDetail || isAnalyzing else {
             spinnerDelay?.cancel()
             spinnerDelay = nil
             viewerView.setSpinning(false)
@@ -262,7 +304,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             try? await Task.sleep(for: Self.spinnerDelayDuration)
             guard !Task.isCancelled else { return }
             spinnerDelay = nil
-            if isNavigationBusy || isDecoding || isLoadingDetail { viewerView.setSpinning(true) }
+            if isNavigationBusy || isDecoding || isLoadingDetail || isAnalyzing { viewerView.setSpinning(true) }
         }
     }
 
@@ -283,6 +325,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             return
         }
         if isFollowing { onFollowingEnded?() }
+        resetLiveText()
         mode = .ownList
         followedURL = nil
         travelsBackward = false
@@ -348,6 +391,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         // Из .closing продолжаем с текущей прозрачности, без мигания.
         state = .visible
         panel.ignoresMouseEvents = false
+        watchAuxiliaryWindows()
         let following = mode == .following
         // Пока просмотр открыт, Пробел должен закрывать его, а не открывать снова;
         // в режиме «следовать» все нажатия разбирает перехват.
@@ -390,6 +434,27 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         displayedURL = nil
         zoomMemory.forget()
         run(infoHold.reset())
+        runLive(liveHold.reset())
+        forgetLiveText()
+        lookUpPending = false
+        sharePicker?.close()
+        sharePicker = nil
+        isSharing = false
+        panel.level = .screenSaver
+        if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
+        mouseMonitor = nil
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didUpdateNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSPopover.didShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSPopover.didCloseNotification, object: nil)
+        popovers.forEach { $0.close() }
+        popovers.removeAll()
+        foreignPreviewWatch?.cancel()
+        foreignPreviewWatch = nil
+        foreignPreview = nil
+        linkPreviewClosing = false
+        swallowsMouseUp = false
+        returnKeyboard()
+        liveViewSettle?.cancel()
         infoTask?.cancel()
         infoCache.removeAll()
         detailFailed.removeAll()
@@ -433,7 +498,13 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     // В режиме «следовать» панель не бывает ключевой — там закрывает AppDelegate, когда Finder неактивен.
     func windowDidResignKey(_ notification: Notification) {
         guard mode == .ownList else { return }
-        close(returnFocus: false)
+        // Клавиатура ушла в другое окно Ementium — окно AirDrop, карточку VisionKit: просмотр остаётся. Новое
+        // ключевое окно известно уже после этого уведомления — проверяем следующим проходом.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.state == .visible, self.mode == .ownList, !self.panel.isKeyWindow else { return }
+            if let key = NSApp.keyWindow, key !== self.panel { return }
+            self.close(returnFocus: false)
+        }
     }
 
     private func handle(_ command: ViewerCommand) {
@@ -443,6 +514,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         case .previous:
             navigate(by: -1)
         case .close:
+            if closeLiveWindows() { return }
             close(returnFocus: true)
         case .quit:
             NSApp.terminate(nil)
@@ -467,6 +539,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             copyCurrent()
         case .openInApp:
             openCurrentInApp()
+        case .lookUp:
+            lookUp()
+        case .share:
+            share()
         }
     }
 
@@ -476,15 +552,25 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     func rotate(clockwise: Bool) {
         guard state == .visible else { return }
         viewerView.rotate(clockwise: clockwise)
+        // Рамки текста распознаны для прежнего поворота — в режиме распознаём заново, иначе забываем.
+        forgetLiveText()
+        if liveHold.isActive { analyzeLiveText() }
     }
 
-    /// `⌘C` — файл в буфер обмена, как в Finder: в Finder вставится копия файла, в мессенджеры — вложение.
+    /// `⌘C` — выделенный текст (Live Text), а без него — файл в буфер обмена, как в Finder: в Finder вставится
+    /// копия файла, в мессенджеры — вложение.
     func copyCurrent() {
         guard state == .visible, let url = currentURL else { return }
         let pasteboard = NSPasteboard.general
+        let text = viewerView.selectedLiveText
         pasteboard.clearContents()
-        pasteboard.writeObjects([url as NSURL])
-        viewerView.showMessage(String(localized: "Copied"))
+        if !text.isEmpty {
+            pasteboard.setString(text, forType: .string)
+            viewerView.showMessage(String(localized: "Text copied"))
+        } else {
+            pasteboard.writeObjects([url as NSURL])
+            viewerView.showMessage(String(localized: "Copied"))
+        }
     }
 
     /// `⌘O` — закрыть просмотр и открыть файл в приложении по умолчанию.
@@ -545,6 +631,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             }
             loaded = detailed
             viewerView.upgrade(detailed.surface)
+            // В режиме Live Text — распознать детали: мелкий текст на большом снимке виден только в них.
+            if liveHold.isActive { analyzeLiveText() }
         }
     }
 
@@ -593,6 +681,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 }
                 loaded = image
                 viewerView.upgrade(image.surface)
+                if liveHold.isActive { analyzeLiveText() }
             } else {
                 loaded = image
                 display(image, for: url)
@@ -617,9 +706,499 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// с её запомненным масштабом или во «вписать».
     /// Та же картинка заново (файл поменяли, пока смотрели) так сохраняет свой масштаб.
     private func display(_ image: DecodedImage, for url: URL) {
+        // Новая картинка: режим Live Text и распознанное — от прежней.
+        runLive(liveHold.reset())
+        forgetLiveText()
+        lookUpPending = false
         rememberDisplayedZoom()
         viewerView.show(image, placement: zoomMemory.placement(for: url))
         displayedURL = url
+    }
+
+    // MARK: - Live Text, поиск по изображению, «Поделиться»
+
+    private func runLive(_ outputs: [LiveTextHoldTracker.Output]) {
+        for output in outputs {
+            switch output {
+            case .startTimer:
+                liveTimer?.cancel()
+                liveTimer = Task {
+                    try? await Task.sleep(for: LiveTextHoldTracker.delay)
+                    guard !Task.isCancelled else { return }
+                    runLive(liveHold.timerFired())
+                }
+            case .cancelTimer:
+                liveTimer?.cancel()
+                liveTimer = nil
+            case .enter:
+                viewerView.setLiveMode(true)
+                analyzeLiveText()
+            case .exit:
+                lookUpPending = false
+                viewerView.setLiveMode(false)
+            }
+        }
+    }
+
+    /// Кнопка Live Text: подсветка включена — режим держится и без `⌘`.
+    private func liveTextLatched(_ latched: Bool) {
+        guard state == .visible else { return }
+        runLive(liveHold.setLatched(latched, commandHeld: NSEvent.modifierFlags.contains(.command)))
+    }
+
+    /// Распознать показанное, если ещё не распознано (или с тех пор подгрузилась деталь, повернули). Анимацию —
+    /// нет; выключено в настройках — режим показывает только «Поделиться».
+    private func analyzeLiveText() {
+        guard preferences.liveText, let current = loaded, !current.isAnimated, let zoom = viewerView.zoom else {
+            finishLookUp()
+            return
+        }
+        let surface = ObjectIdentifier(current.surface)
+        let visible = viewerView.visibleImageUnitRect
+        if let liveKey, liveKey.surface == surface, liveKey.quarterTurns == zoom.quarterTurns,
+           Self.liveCropCovers(liveKey.crop, visible: visible) {
+            // Вернулись к распознанному, пока распознавалось другое, — то устарело.
+            if liveTask != nil {
+                liveTask?.cancel()
+                liveTask = nil
+                isAnalyzing = false
+                updateSpinner()
+            }
+            finishLookUp()
+            return
+        }
+        let key = LiveKey(surface: surface, quarterTurns: zoom.quarterTurns, crop: Self.liveCrop(for: visible))
+        liveTask?.cancel()
+        isAnalyzing = true
+        updateSpinner()
+        liveTask = Task {
+            let analysis = await liveAnalyzer.analyze(current.surface, crop: key.crop, quarterTurns: key.quarterTurns)
+            // Отменил тот, кто сменил картинку или поворот, — он же сбросил индикатор.
+            guard !Task.isCancelled else { return }
+            liveTask = nil
+            isAnalyzing = false
+            updateSpinner()
+            guard state == .visible, loaded === current, viewerView.zoom?.quarterTurns == key.quarterTurns else { return }
+            guard let analysis else {
+                // Не запоминаем: следующее нажатие `⌘` попробует снова.
+                log.notice("Live Text: распознать не удалось")
+                finishLookUp()
+                return
+            }
+            liveKey = key
+            viewerView.setLiveAnalysis(analysis, crop: key.crop)
+            finishLookUp()
+        }
+    }
+
+    /// Что распознавать: картинку целиком, если видно почти всю, иначе видимую часть с запасом 10 % по краям.
+    nonisolated static func liveCrop(for visible: CGRect?) -> CGRect {
+        guard let visible, visible.width * visible.height < 0.8 else { return ViewerView.unitRect }
+        let margin = max(visible.width, visible.height) * 0.1
+        return visible.insetBy(dx: -margin, dy: -margin).intersection(ViewerView.unitRect)
+    }
+
+    /// Распознанное годится: видимое внутри распознанного, а увеличили не настолько, чтобы мелкий текст стал
+    /// распознаваться лучше (распознанная часть больше нужной не более чем вдвое по стороне).
+    nonisolated static func liveCropCovers(_ crop: CGRect, visible: CGRect?) -> Bool {
+        let needed = liveCrop(for: visible)
+        guard crop.insetBy(dx: -0.001, dy: -0.001).contains(needed) else { return false }
+        return max(crop.width / needed.width, crop.height / needed.height) <= 2
+    }
+
+    /// Масштаб или сдвиг: в режиме — распознать видимое заново, когда движение уляжется.
+    private func liveViewChanged() {
+        guard liveHold.isActive else { return }
+        liveViewSettle?.cancel()
+        liveViewSettle = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled, state == .visible, liveHold.isActive else { return }
+            analyzeLiveText()
+        }
+    }
+
+    /// Другая картинка или поворот: распознанное больше не ложится на экран.
+    /// Новый просмотр поверх открытого (Пробел, `open -a`): режим `⌘`, распознанное и одолженная клавиатура — от
+    /// прежнего. До смены режима: `returnKeyboard` смотрит на него.
+    private func resetLiveText() {
+        runLive(liveHold.reset())
+        lookUpPending = false
+        forgetLiveText()
+        returnKeyboard()
+    }
+
+    private func forgetLiveText() {
+        liveTask?.cancel()
+        liveTask = nil
+        if isAnalyzing {
+            isAnalyzing = false
+            updateSpinner()
+        }
+        liveKey = nil
+        closeLiveCards()
+        viewerView.setLiveAnalysis(nil)
+    }
+
+    /// Карточки и просмотр ссылки относятся к распознанному: со сменой картинки, поворотом и закрытием просмотра
+    /// закрываются. Просмотр ссылки — окно другого процесса, со сменой анализа и скрытием панели он не закрывается
+    /// (висел поверх всего, пока не нажмёшь `⌘` в следующем просмотре).
+    private func closeLiveCards() {
+        closeCards(popovers)
+        if viewerView.hasLiveAnalysis { DataDetectorBubbles.close() }
+    }
+
+    /// `⌘L` — «Поиск по изображению»: режим (кнопки VisionKit) фиксируется, после распознавания нажимается его
+    /// кнопка поиска. Открыть поиск напрямую VisionKit не даёт.
+    func lookUp() {
+        guard state == .visible else { return }
+        guard preferences.liveText else {
+            viewerView.showMessage(String(localized: "Live Text is off — turn it on in Settings"))
+            return
+        }
+        lookUpPending = true
+        let outputs = liveHold.latch()
+        runLive(outputs)
+        // Режим уже был включён — распознанное могло быть готово.
+        if outputs.isEmpty { analyzeLiveText() }
+    }
+
+    private func finishLookUp() {
+        guard lookUpPending else { return }
+        lookUpPending = false
+        guard viewerView.hasLookUpResults else {
+            viewerView.showMessage(String(localized: "Look Up found nothing"))
+            return
+        }
+        // Кнопки VisionKit появляются с анимацией — нажимать после неё.
+        Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            guard state == .visible, liveHold.isActive else { return }
+            if !viewerView.pressLookUp() { viewerView.showMessage(String(localized: "Look Up found nothing")) }
+        }
+    }
+
+    /// `⌘S` и кнопка рядом с кнопками VisionKit — меню «Поделиться» с показанным файлом.
+    func share() {
+        guard state == .visible, sharePicker == nil, !isSharing, let url = currentURL else { return }
+        let picker = NSSharingServicePicker(items: [url as NSURL])
+        picker.delegate = self
+        sharePicker = picker
+        // Меню — окно уровня 101: под панелью уровня .screenSaver его не видно, а невидимое оно забирало бы клики.
+        // На время меню панель — над строкой меню и Dock, но под меню.
+        setPanelLevel(.statusBar, reason: "меню «Поделиться»")
+        picker.show(relativeTo: viewerView.shareAnchor, of: viewerView, preferredEdge: .minY)
+    }
+
+    /// Сервис не сообщил, что закончил (AirDrop закрыли, ничего не отправив): его окна были и исчезли — значит,
+    /// закончил. Иначе панель осталась бы обычного уровня до конца просмотра.
+    private func watchSharingWindows() {
+        Task {
+            var sawWindows = false
+            while isSharing, state == .visible {
+                if !auxiliaryWindows().isEmpty {
+                    sawWindows = true
+                } else if sawWindows {
+                    log.notice("«Поделиться»: окна сервиса закрылись без ответа")
+                    finishSharing()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+    }
+
+    /// Меню закрыли или сервис закончил: панель — снова поверх всего, своему списку — клавиатура. Пока меню было
+    /// открыто, отпускание `⌘` уходило ему — сверяем режим Live Text с тем, что держат сейчас.
+    private func finishSharing() {
+        isSharing = false
+        guard state == .visible else { return }
+        setPanelLevel(.screenSaver, reason: "«Поделиться» закончено")
+        if mode == .ownList {
+            panel.makeKey()
+            panel.makeFirstResponder(viewerView)
+        }
+        input(.modifiers(HoldModifiers(NSEvent.modifierFlags)))
+    }
+
+    // MARK: - Окна VisionKit
+
+    /// Карточка контакта, просмотр ссылки: VisionKit открывает свои окна, и под панелью уровня .screenSaver их бы
+    /// не было видно — поднимаем их над ней после каждого события (отпускание мыши VisionKit забирает себе). Пока
+    /// такое окно открыто, щелчок по просмотру только закрывает его (повторный щелчок по «пилюле» — как в Quick Look).
+    /// Заодно — модификаторы своего списка: после щелчка по тексту клавиатура у оверлея, до просмотра они не доходят.
+    private func watchAuxiliaryWindows() {
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .flagsChanged]) { [weak self] event in
+            let type = event.type
+            let inPanel = event.window != nil && event.window === self?.panel
+            let location = event.locationInWindow
+            let modifiers = HoldModifiers(event.modifierFlags)
+            let swallow = MainActor.assumeIsolated {
+                self?.monitored(type, at: location, inPanel: inPanel, modifiers: modifiers) ?? false
+            }
+            return swallow ? nil : event
+        }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidUpdate(_:)), name: NSApplication.didUpdateNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(popoverDidShow(_:)), name: NSPopover.didShowNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(popoverDidClose(_:)), name: NSPopover.didCloseNotification, object: nil
+        )
+    }
+
+    // Уведомления о всплывающих окнах приходят на главном потоке; объект достаём до перехода на главный актор.
+    @objc nonisolated private func popoverDidShow(_ notification: Notification) {
+        let shown = notification.object as? NSPopover
+        MainActor.assumeIsolated {
+            guard state == .visible, let popover = shown,
+                  popover.contentViewController?.view.window?.parent === panel else { return }
+            popovers.append(popover)
+            let content = popover.contentViewController.map { String(describing: type(of: $0)) } ?? "-"
+            log.notice("Карточка VisionKit: \(content, privacy: .public)")
+        }
+    }
+
+    @objc nonisolated private func popoverDidClose(_ notification: Notification) {
+        let closed = notification.object as? NSPopover
+        MainActor.assumeIsolated {
+            popovers.removeAll { $0 === closed || !$0.isShown }
+            // Свой список: пока карточка была открыта, клавиатура и отпускание `⌘` могли уйти ей.
+            guard state == .visible, mode == .ownList, popovers.isEmpty else { return }
+            if !panel.isKeyWindow {
+                panel.makeKey()
+                panel.makeFirstResponder(viewerView)
+            }
+            input(.modifiers(HoldModifiers(NSEvent.modifierFlags)))
+        }
+    }
+
+    private func monitored(_ type: NSEvent.EventType, at location: NSPoint, inPanel: Bool, modifiers: HoldModifiers) -> Bool {
+        // Отпускание поглощённого щелчка — тоже: без нажатия оно досталось бы виду, который о щелчке не знает.
+        if type == .leftMouseUp {
+            defer { swallowsMouseUp = false }
+            return swallowsMouseUp && inPanel
+        }
+        guard state == .visible, inPanel else { return false }
+        if type == .flagsChanged {
+            // Режим «следовать» — модификаторы присылает перехват (клавиатура у Finder).
+            if mode == .ownList { input(.modifiers(modifiers)) }
+            return false
+        }
+        guard !isSharing, sharePicker == nil else { return false }
+        // Просмотр ссылки открыт — щелчок по просмотру только закрывает его, как карточку контакта; по той же
+        // «пилюле» — тоже (иначе VisionKit закрывал и тут же открывал его снова). Поглощается целиком, с
+        // отпусканием: в нашем окне у просмотра ссылки нет своего распознавателя, сбивать нечего (прототип
+        // LiveTextProbe, pilltest, LINKTOGGLE).
+        if closeLinkPreview() {
+            swallowsMouseUp = true
+            return true
+        }
+        let dataHit = viewerView.isLiveActionHit(atWindowPoint: location)
+        if mode == .following, dataHit { lendKeyboard() }
+        let shown = popovers.filter(\.isShown)
+        if !shown.isEmpty {
+            // Щелчок мимо карточки не поглощаем: его забирает сама карточка (так NSPopover закрывается щелчком
+            // мимо). Поглощённый сбивал её учёт щелчков, и следующий щелчок по «пилюле» пропадал (прототип
+            // LiveTextProbe, pilltest). Закрываем сами, после щелчка: делегат карточки на щелчок мимо закрываться
+            // отказывается.
+            DispatchQueue.main.async { [weak self] in self?.closeCards(shown) }
+            return false
+        }
+        // Окно закрывающейся карточки ещё видно, а в списке карточек её уже нет: щелчок по нему не поглощать.
+        let open = auxiliaryWindows().filter { !String(describing: Swift.type(of: $0)).contains("Popover") }
+        guard open.isEmpty else {
+            for window in open { dismiss(window) }
+            swallowsMouseUp = true
+            return true
+        }
+        // Просмотр ссылки открывает только щелчок по данным: от прочих щелчков чужое окно (HUD, Spotlight) за него
+        // принять нельзя.
+        if dataHit { watchForeignPreview(since: Self.onScreenWindowNumbers()) }
+        return false
+    }
+
+    /// После каждого события приложения: появилось окно VisionKit — поднять. Только пока просмотр открыт;
+    /// уведомление приходит на главном потоке, но селектору изоляция не видна — проверяем сами.
+    @objc nonisolated private func applicationDidUpdate(_ notification: Notification) {
+        MainActor.assumeIsolated { raiseAuxiliaryWindows() }
+    }
+
+    /// Видимые окна Ementium, кроме просмотра, настроек, палитры, меню, подсказок, иконки в строке меню и карточек
+    /// (их закрываем через `NSPopover`).
+    private func auxiliaryWindows() -> [NSWindow] {
+        let popoverWindows = popovers.compactMap { $0.contentViewController?.view.window }
+        return NSApp.windows.filter { window in
+            guard window.isVisible, window !== panel, !(window is SettingsPanel), !(window is NSColorPanel),
+                  !popoverWindows.contains(where: { $0 === window }) else { return false }
+            let name = String(describing: type(of: window))
+            return !["StatusBar", "Menu", "ToolTip"].contains { name.contains($0) }
+        }
+    }
+
+    private func raiseAuxiliaryWindows() {
+        guard state == .visible, !isSharing, sharePicker == nil else { return }
+        for window in auxiliaryWindows() {
+            let id = ObjectIdentifier(window)
+            if !loggedAuxiliaryWindows.contains(id) {
+                loggedAuxiliaryWindows.insert(id)
+                let parent = window.parent.map { String(describing: type(of: $0)) } ?? "-"
+                log.notice("Окно VisionKit: \(String(describing: type(of: window)), privacy: .public), уровень \(window.level.rawValue, privacy: .public), родитель \(parent, privacy: .public)")
+            }
+            if window.level < panel.level {
+                window.level = NSWindow.Level(rawValue: panel.level.rawValue + 1)
+            }
+        }
+    }
+
+    private nonisolated static func onScreenWindows() -> [[String: Any]] {
+        CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    }
+
+    private nonisolated static func onScreenWindowNumbers() -> Set<Int> {
+        Set(onScreenWindows().compactMap { $0[kCGWindowNumber as String] as? Int })
+    }
+
+    /// Просмотр ссылки система ставит у окна и над ним, только если окно ключевое. В режиме «следовать» панель
+    /// ключевой не бывает — окно уходило в левый нижний угол экрана, под панель. Поэтому на время щелчка по «пилюле»
+    /// или распознанным данным панель берёт клавиатуру (неактивирующая — Finder остаётся впереди) и отдаёт её, как
+    /// только окно ссылки появилось, иначе через 2 с. Клавиши в режиме «следовать» и так разбирает перехват; окно
+    /// ссылки и карточка контакта возврат клавиатуры переживают (прототип LiveTextProbe, pilltest, KEYTRICK).
+    private func lendKeyboard() {
+        keyboardLoan?.cancel()
+        panel.acceptsKeyboard = true
+        panel.makeKey()
+        log.notice("Режим «следовать»: панель берёт клавиатуру на время щелчка по данным")
+        keyboardLoan = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.returnKeyboard()
+        }
+    }
+
+    private func returnKeyboard() {
+        guard let loan = keyboardLoan else { return }
+        loan.cancel()
+        keyboardLoan = nil
+        guard mode == .following else { return }
+        panel.acceptsKeyboard = false
+        // Ключевая неактивирующая панель делает Ementium «активным» в глазах AppKit, хотя впереди Finder:
+        // deactivate возвращает клавиатуру ему.
+        NSApp.deactivate()
+        log.notice("Режим «следовать»: клавиатура снова у Finder")
+    }
+
+    /// Закрыть карточки VisionKit. `performClose` делегат карточки отклоняет, кнопка «Отменить» — в другом процессе
+    /// (карточка — удалённый вид), поэтому только `close`.
+    private func closeCards(_ cards: [NSPopover]) {
+        for card in cards where card.isShown {
+            log.notice("Закрываю карточку VisionKit")
+            card.close()
+        }
+    }
+
+    /// Просмотр ссылки показывает другой процесс (`com.apple.quicklook.ui.helper`) окном на уровень выше окна, к
+    /// которому он привязан, — если оно ключевое (для режима «следовать» — `lendKeyboard`). Иначе окно — уровня 101,
+    /// под панелью .screenSaver, а поднять чужое окно нельзя: пока оно открыто, панель опускается до .statusBar — над
+    /// строкой меню и Dock, но под ним (как для меню «Поделиться»).
+    private func watchForeignPreview(since before: Set<Int>) {
+        if foreignPreview != nil {
+            // Прежнее окно гаснет по нашей просьбе (щелчок по «пилюле» сразу после закрытия) — следим за новым.
+            guard linkPreviewClosing else { return }
+            forgetForeignPreview()
+        }
+        foreignPreviewWatch?.cancel()
+        foreignPreviewWatch = Task {
+            for _ in 0..<12 {
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, state == .visible, !isSharing else { return }
+                guard let window = Self.newForeignWindow(since: before) else { continue }
+                foreignPreview = window.number
+                returnKeyboard()
+                let bundle = NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier ?? "?"
+                log.notice("Окно другого процесса после щелчка: \(window.owner, privacy: .public) (\(bundle, privacy: .public)), уровень \(window.layer, privacy: .public)")
+                // Под панелью (режим «следовать», если панель не стала ключевой) — панель ниже, пока оно открыто.
+                if window.layer < panel.level.rawValue { setPanelLevel(.statusBar, reason: "просмотр ссылки") }
+                while !Task.isCancelled, state == .visible, Self.onScreenWindowNumbers().contains(window.number) {
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
+                // Отменили — за окном уже следит новое наблюдение или просмотр закрыт.
+                guard !Task.isCancelled else { return }
+                log.notice("Окно другого процесса закрылось")
+                forgetForeignPreview()
+                return
+            }
+        }
+    }
+
+    /// Окно просмотра ссылки закрылось (или за ним больше не следим): панель — снова поверх всего.
+    private func forgetForeignPreview() {
+        foreignPreviewWatch?.cancel()
+        foreignPreviewWatch = nil
+        foreignPreview = nil
+        linkPreviewClosing = false
+        if state == .visible, !isSharing, sharePicker == nil { setPanelLevel(.screenSaver, reason: "просмотр ссылки закрыт") }
+    }
+
+    /// Открыта карточка контакта или просмотр ссылки — `Esc` и Пробел закрывают только их, второе нажатие — просмотр
+    /// (так в своём списке: там `Esc` достаётся им самим, а в режиме «следовать» его забирает перехват). `true` —
+    /// было что закрыть.
+    func closeLiveWindows() -> Bool {
+        guard state == .visible else { return false }
+        let cards = popovers.filter(\.isShown)
+        guard cards.isEmpty else {
+            closeCards(cards)
+            return true
+        }
+        return closeLinkPreview()
+    }
+
+    /// Просмотр ссылки открыт — закрыть только его (клавишей — `closeLiveWindows`, щелчком по просмотру — из
+    /// монитора). `true` — был открыт и закрывается.
+    @discardableResult
+    private func closeLinkPreview() -> Bool {
+        guard state == .visible, foreignPreview != nil, !linkPreviewClosing else { return false }
+        // Нечем закрыть (частного метода нет) — пусть `Esc` закрывает просмотр, а щелчок проходит как раньше.
+        guard DataDetectorBubbles.close() else { return false }
+        linkPreviewClosing = true
+        log.notice("Закрываю просмотр ссылки")
+        return true
+    }
+
+    private nonisolated static func newForeignWindow(
+        since before: Set<Int>
+    ) -> (number: Int, pid: pid_t, owner: String, layer: Int)? {
+        let own = Int(ProcessInfo.processInfo.processIdentifier)
+        for info in onScreenWindows() {
+            guard let number = info[kCGWindowNumber as String] as? Int, !before.contains(number),
+                  let pid = info[kCGWindowOwnerPID as String] as? Int, pid != own else { continue }
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            guard layer > NSWindow.Level.statusBar.rawValue else { continue }
+            return (number, pid_t(pid), info[kCGWindowOwnerName as String] as? String ?? "?", layer)
+        }
+        return nil
+    }
+
+    /// Уровень панели — с причиной в журнале: панель опускается под меню «Поделиться», окна сервисов и просмотр
+    /// ссылки и должна вернуться наверх, иначе поверх просмотра видны строка меню и Dock.
+    private func setPanelLevel(_ level: NSWindow.Level, reason: String) {
+        guard panel.level != level else { return }
+        panel.level = level
+        log.notice("Панель просмотра: уровень \(level.rawValue, privacy: .public) — \(reason, privacy: .public)")
+    }
+
+    /// Закрыть окно VisionKit. Карточку, показанную как представление контроллера, — штатно; иначе — само окно.
+    /// Esc не подходит: карточка его не обрабатывает, и система пищит.
+    private func dismiss(_ window: NSWindow) {
+        if let content = window.contentViewController, content.presentingViewController != nil {
+            log.notice("Закрываю окно VisionKit \(String(describing: type(of: window)), privacy: .public): dismiss")
+            content.dismiss(nil)
+        } else {
+            log.notice("Закрываю окно VisionKit \(String(describing: type(of: window)), privacy: .public): close")
+            window.close()
+        }
     }
 
     // MARK: - Сведения о снимке
@@ -628,8 +1207,12 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     func input(_ input: ViewerInput) {
         guard state == .visible else { return }
         switch input {
-        case .modifiers(let modifiers): run(infoHold.modifiersChanged(modifiers))
-        case .keyPressed(let isArrow): run(infoHold.keyPressed(isArrow: isArrow))
+        case .modifiers(let modifiers):
+            run(infoHold.modifiersChanged(modifiers))
+            runLive(liveHold.modifiersChanged(modifiers))
+        case .keyPressed(let isArrow):
+            run(infoHold.keyPressed(isArrow: isArrow))
+            runLive(liveHold.keyPressed())
         }
     }
 
@@ -793,5 +1376,51 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private func rememberPrevious(_ app: NSRunningApplication?) {
         guard let app, app != NSRunningApplication.current else { return }
         previousApp = app
+    }
+}
+
+extension ViewerWindowController: NSSharingServicePickerDelegate, NSSharingServiceDelegate {
+    func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+        sharePicker = nil
+        guard let service else {
+            finishSharing()
+            return
+        }
+        guard state == .visible else { return }
+        // Окна сервисов — обычного уровня: AirDrop — окна Ementium, «Сообщения» и «Почта» — другое приложение
+        // (просмотр тогда закроется сам: Finder или панель теряют клавиатуру). На время сервиса панель — обычная.
+        isSharing = true
+        // Название службы может быть именем контакта (подсказки получателей) — в журнал скрыто.
+        log.info("«Поделиться»: \(service.title, privacy: .private)")
+        setPanelLevel(.normal, reason: "служба «Поделиться»")
+        watchSharingWindows()
+    }
+
+    func sharingServicePicker(
+        _ sharingServicePicker: NSSharingServicePicker, delegateFor sharingService: NSSharingService
+    ) -> (any NSSharingServiceDelegate)? {
+        self
+    }
+
+    func sharingService(
+        _ sharingService: NSSharingService, sourceWindowForShareItems items: [Any],
+        sharingContentScope: UnsafeMutablePointer<NSSharingService.SharingContentScope>
+    ) -> NSWindow? {
+        panel
+    }
+
+    func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
+        finishSharing()
+        // У «Добавить в Фото» своего окна нет — без подсказки не видно, что получилось.
+        if sharingService.title == NSSharingService(named: .addToIPhoto)?.title {
+            showMessage(String(localized: "Added to Photos"))
+        }
+    }
+
+    func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: any Error) {
+        finishSharing()
+        let error = error as NSError
+        guard !(error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError) else { return }
+        showMessage(String(localized: "Couldn't share"))
     }
 }
