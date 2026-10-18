@@ -95,7 +95,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var lookUpPending = false
     /// Открытое меню «Поделиться» и работающий сервис (окна AirDrop — свои, их не трогаем).
     private var sharePicker: NSSharingServicePicker?
-    private var isSharing = false
+    private(set) var isSharing = false
+    /// Работающая служба — чтобы при закрытии просмотра отменить её (`SharingSheet.dismiss`).
+    private var sharingService: NSSharingService?
     /// Щелчки по просмотру — для окон VisionKit (карточка контакта, просмотр ссылки).
     private var mouseMonitor: Any?
     /// Окна VisionKit, уже записанные в журнал.
@@ -464,6 +466,13 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         lookUpPending = false
         sharePicker?.close()
         sharePicker = nil
+        // Лист AirDrop — дочернее окно панели: со скрытием панели он только прячется и всплывает в следующем
+        // просмотре (⌘Tab во время AirDrop). Отменяем саму службу.
+        if isSharing, let sharingService {
+            let dismissed = SharingSheet.dismiss(sharingService)
+            log.notice("«Поделиться»: просмотр закрыт во время службы, отмена — \(dismissed ? "да" : "нечем", privacy: .public)")
+        }
+        sharingService = nil
         isSharing = false
         panel.level = .screenSaver
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
@@ -1145,11 +1154,17 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// открыто, отпускание `⌘` уходило ему — сверяем режим Live Text с тем, что держат сейчас.
     private func finishSharing() {
         isSharing = false
+        sharingService = nil
         guard state == .visible else { return }
         setPanelLevel(.screenSaver, reason: "«Поделиться» закончено")
         if mode == .ownList {
             panel.makeKey()
             panel.makeFirstResponder(viewerView)
+        } else if NSRunningApplication.current.isActive,
+                  let finder = NSRunningApplication.runningApplications(withBundleIdentifier: FinderBridge.finderBundleID).first {
+            // AirDrop сделал Ementium активным — Finder снова впереди, иначе стрелки не доходили бы до перехвата.
+            log.notice("«Поделиться» закончено: возвращаю активность Finder")
+            finder.activate()
         }
         input(.modifiers(HoldModifiers(NSEvent.modifierFlags)))
     }
@@ -1627,6 +1642,7 @@ extension ViewerWindowController: NSSharingServicePickerDelegate, NSSharingServi
         // Окна сервисов — обычного уровня: AirDrop — окна Ementium, «Сообщения» и «Почта» — другое приложение
         // (просмотр тогда закроется сам: Finder или панель теряют клавиатуру). На время сервиса панель — обычная.
         isSharing = true
+        sharingService = service
         // Название службы может быть именем контакта (подсказки получателей) — в журнал скрыто.
         log.info("«Поделиться»: \(service.title, privacy: .private)")
         setPanelLevel(.normal, reason: "служба «Поделиться»")
@@ -1656,8 +1672,29 @@ extension ViewerWindowController: NSSharingServicePickerDelegate, NSSharingServi
 
     func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: any Error) {
         finishSharing()
+        // Отменили мы сами, закрывая просмотр (`SharingSheet.dismiss`, ответ — код 4097): сообщать некому.
+        guard state == .visible else { return }
         let error = error as NSError
         guard !(error.domain == NSCocoaErrorDomain && error.code == NSUserCancelledError) else { return }
         showMessage(String(localized: "Couldn't share"))
+    }
+}
+
+/// Отмена работающей службы «Поделиться» — частным `-[NSSharingService dismissWithCompletion:]`: окна AirDrop
+/// закрываются, служба отвечает `didFailToShareItems` (прототип: просто спрятанное окно-источник лист не отменяет,
+/// он возвращается с окном). Метод частный: на другой версии macOS его может не быть — тогда `false`.
+enum SharingSheet {
+    @discardableResult
+    static func dismiss(_ service: NSSharingService) -> Bool {
+        let selector = NSSelectorFromString("dismissWithCompletion:")
+        // Та же сигнатура, что на macOS 27: ничего не возвращает, один аргумент — блок. Иначе вызов вслепую.
+        guard service.responds(to: selector),
+              let method = class_getInstanceMethod(type(of: service), selector),
+              let encoding = method_getTypeEncoding(method),
+              String(cString: encoding).replacing(/\d/, with: "") == "v@:@?" else { return false }
+        // Блок — пустой, а не nil: вызывает ли его служба без проверки, неизвестно.
+        typealias Dismiss = @convention(c) (AnyObject, Selector, @escaping @convention(block) () -> Void) -> Void
+        unsafeBitCast(service.method(for: selector), to: Dismiss.self)(service, selector, {})
+        return true
     }
 }

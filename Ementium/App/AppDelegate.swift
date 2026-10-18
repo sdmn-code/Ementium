@@ -351,6 +351,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Пробел вероятен — сервис декодирования поднимаем заранее, чтобы не ждать его запуска.
             DecoderClient.shared.warmUp()
         } else if viewer.isFollowing {
+            // AirDrop делает активным сам Ementium (его окна — наши): просмотр остаётся, по окончании службы
+            // активность вернётся Finder (`finishSharing`).
+            if app == NSRunningApplication.current, viewer.isSharing {
+                log.notice("«Поделиться»: Ementium активен на время службы, просмотр остаётся")
+                return
+            }
             // ⌘Tab, Spotlight, клик по уведомлению: Finder больше не получает наши стрелки.
             endFollowing()
         }
