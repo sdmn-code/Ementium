@@ -59,6 +59,14 @@ nonisolated enum PrefetchWindow {
         of index: Int, count: Int, url: (Int) -> URL?, isImage: (URL) -> Bool,
         forward: Int = forward, backward: Int = backward, limit: Int = .max
     ) -> Neighbors {
+        // Один файл бывает в окне дважды (группировка по тегам кладёт файл с двумя метками в обе группы): в соседях
+        // он — один раз и никогда не совпадает с текущим, иначе шаг или смахивание показали бы ту же картинку.
+        // Адрес текущего — лениво, только когда найдена картинка: в окне Finder каждый вызов `url` — AX-запрос.
+        var current: URL??
+        func isCurrent(_ file: URL) -> Bool {
+            if current == nil { current = (0..<count).contains(index) ? url(index) : nil }
+            return current! == file
+        }
         func scan(step: Int, wanted: Int) -> [URL] {
             var found: [URL] = []
             var position = index
@@ -67,7 +75,7 @@ nonisolated enum PrefetchWindow {
                 position += step
                 guard (0..<count).contains(position) else { break }
                 looked += 1
-                if let file = url(position), isImage(file) { found.append(file) }
+                if let file = url(position), isImage(file), !found.contains(file), !isCurrent(file) { found.append(file) }
             }
             return found
         }

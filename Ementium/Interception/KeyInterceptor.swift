@@ -169,10 +169,11 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
     private func handleViewerKey(_ event: CGEvent, keyCode: UInt16, isRepeat: Bool) -> Unmanaged<CGEvent>? {
         let snapshot = state.snapshot
         onViewerInput(.keyPressed(isArrow: ArrowKey(rawValue: keyCode) != nil))
+        if isRepeat, ArrowKey(rawValue: keyCode) != nil { onViewerInput(.arrowHeld) }
         let action = InterceptionPolicy.followingAction(
             keyCode: keyCode, characters: characters(of: event), flags: event.flags, isRepeat: isRepeat,
             systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer,
-            trashEnabled: snapshot.trashEnabled
+            trashEnabled: snapshot.trashEnabled, tagsEnabled: snapshot.tagsEnabled
         )
         switch action {
         case .pass:
@@ -185,8 +186,8 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         case .swallow:
             swallowed.swallow(keyCode)
             return nil
-        case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undoTrash, .edge, .rotate, .copy, .openInApp,
-             .lookUp, .share:
+        case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undo, .edge, .rotate, .copy, .openInApp,
+             .lookUp, .share, .tag:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

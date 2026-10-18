@@ -21,6 +21,8 @@ nonisolated struct InterceptionSnapshot: Sendable, Equatable {
     var spaceClosesViewer = true
     /// Настройка «⌘⌫ перемещает в Корзину».
     var trashEnabled = false
+    /// Метки клавишами 1–7.
+    var tagsEnabled = false
 }
 
 /// Общий снимок для трёх потоков: главного, `FinderBridge` и `KeyInterceptor`.

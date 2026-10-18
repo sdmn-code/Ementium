@@ -124,10 +124,11 @@ struct TrashKeyTests {
         #expect(repeated(51, nil, enabled: false) == .swallow)
     }
 
-    @Test func commandZUndoesOnlyWhenEnabled() {
-        #expect(action(6, "z", .maskCommand, enabled: true) == .undoTrash)
-        #expect(action(6, "я", .maskCommand, enabled: true) == .undoTrash)  // русская раскладка — по физическому коду
-        #expect(action(6, "z", .maskCommand, enabled: false) == .swallow)
+    // ⌘Z — общая отмена сеанса (удаление, метки): разбирает просмотр, и без настройки удаления тоже.
+    @Test func commandZUndoesRegardlessOfTrashSetting() {
+        #expect(action(6, "z", .maskCommand, enabled: true) == .undo)
+        #expect(action(6, "я", .maskCommand, enabled: true) == .undo)  // русская раскладка — по физическому коду
+        #expect(action(6, "z", .maskCommand, enabled: false) == .undo)
     }
 
     @Test func ownListCommands() {

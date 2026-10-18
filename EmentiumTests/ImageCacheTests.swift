@@ -7,6 +7,16 @@ import Testing
 struct PrefetchWindowTests {
     private func url(_ name: String) -> URL { URL(fileURLWithPath: "/tmp/\(name)") }
 
+    // Группировка по тегам кладёт файл с двумя метками в обе группы: в соседях он один раз, текущий — никогда.
+    @Test func sidesSkipDuplicatesAndCurrent() {
+        let a = URL(fileURLWithPath: "/tmp/a.png"), b = URL(fileURLWithPath: "/tmp/b.png")
+        let c = URL(fileURLWithPath: "/tmp/c.png")
+        let items = [a, b, b, c, a]
+        let sides = PrefetchWindow.sides(of: 1, count: items.count, url: { items[$0] }, isImage: { _ in true }, forward: 3, backward: 2)
+        #expect(sides.forward == [c, a])
+        #expect(sides.backward == [a])
+    }
+
     @Test func nearestFirstForwardBeforeBackward() {
         let order = PrefetchWindow.order(forward: [url("f1"), url("f2")], backward: [url("b1")])
         #expect(order == [url("f1"), url("b1"), url("f2")])

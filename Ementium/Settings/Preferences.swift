@@ -20,6 +20,8 @@ nonisolated enum Preferences {
         static let trashWithCommandDelete = "trashWithCommandDelete"
         /// Распознавать текст и объекты по удержанию `⌘` (Live Text, «Поиск по изображению»).
         static let liveText = "liveTextEnabled"
+        /// Метки клавишами 1–7 (цветные теги Finder на показанном файле) и точки меток в просмотре.
+        static let tagsWithDigits = "tagsWithDigits"
         /// Угол карточки сведений о снимке (по `⌥`).
         static let infoPanelPosition = "infoPanelPosition"
         /// Последняя открытая вкладка окна настроек (`SettingsPane`).
@@ -40,6 +42,7 @@ nonisolated enum Preferences {
         Key.infoPanelPosition: InfoPanelPosition.topRight.rawValue,
         Key.trashWithCommandDelete: false,
         Key.liveText: true,
+        Key.tagsWithDigits: true,
     ] }
 
     static func register(in store: UserDefaults = .standard) {
@@ -60,6 +63,7 @@ nonisolated struct ViewerPreferences: Equatable {
     var infoPosition: InfoPanelPosition
     var trashEnabled: Bool
     var liveText: Bool
+    var tags: Bool
 
     init(from store: UserDefaults = .standard) {
         Preferences.register(in: store)
@@ -73,6 +77,7 @@ nonisolated struct ViewerPreferences: Equatable {
         infoPosition = store.string(forKey: Preferences.Key.infoPanelPosition).flatMap(InfoPanelPosition.init) ?? .topRight
         trashEnabled = store.bool(forKey: Preferences.Key.trashWithCommandDelete)
         liveText = store.bool(forKey: Preferences.Key.liveText)
+        tags = store.bool(forKey: Preferences.Key.tagsWithDigits)
     }
 }
 

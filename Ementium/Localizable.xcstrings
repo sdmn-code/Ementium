@@ -101,6 +101,16 @@
         }
       }
     },
+    "Can't change labels of this file": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет прав менять метки этого файла"
+          }
+        }
+      }
+    },
     "Can't delete here — delete in Finder": {
       "localizations": {
         "ru": {
@@ -177,6 +187,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Не удалось вернуть"
+          }
+        }
+      }
+    },
+    "Couldn't set the label": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось поставить метку"
           }
         }
       }
@@ -291,6 +311,16 @@
         }
       }
     },
+    "Finder is still working — press ⌘Z again": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finder ещё занят — нажмите ⌘Z ещё раз"
+          }
+        }
+      }
+    },
     "Finder isn't responding — check the Finder window": {
       "localizations": {
         "ru": {
@@ -367,6 +397,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "Клавиатура"
+          }
+        }
+      }
+    },
+    "Keys are the colors from left to right. The label goes on the image on screen, pressing the key again removes it, and ⌘Z puts back what was there.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цифры — цвета по порядку слева направо. Метка ставится на картинку на экране, повторное нажатие её снимает, ⌘Z возвращает как было."
+          }
+        }
+      }
+    },
+    "Label unavailable: add the color tag back in Finder settings": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Метка недоступна: верните цветной тег в настройках Finder"
+          }
+        }
+      }
+    },
+    "Label with keys 1–7": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ставить метки клавишами 1–7"
+          }
+        }
+      }
+    },
+    "Labels": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Метки"
+          }
+        }
+      }
+    },
+    "Labels: %@": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Метки: %@"
           }
         }
       }
@@ -717,6 +797,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Текст скопирован"
+          }
+        }
+      }
+    },
+    "The disk is read-only": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Диск только для чтения"
           }
         }
       }

@@ -110,6 +110,28 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var linkPreviewClosing = false
     /// Щелчок, закрывший просмотр ссылки, поглощён — поглотить и его отпускание.
     private var swallowsMouseUp = false
+    /// Что вернуть по `⌘Z` — действия над файлами в этом сеансе просмотра.
+    private var sessionUndo = SessionUndo()
+    /// Метки: имена цветных тегов на языке системы (порядок меню Finder) — определяются при открытии просмотра.
+    private var tagNamesTask: Task<[String?], Never>?
+    private var resolvedTagNames: [String?]?
+    /// Теги показанной и соседних картинок — читаются заранее, вместе с предзагрузкой: точки меняются в том же
+    /// кадре, что и картинка.
+    private var tagCache: [URL: [String]] = [:]
+    private var tagReads: [URL: Task<Void, Never>] = [:]
+    /// Нажатия цифр и `⌘Z` — строго по очереди: прочитать, переключить, записать; `⌘Z` не обгоняет запись.
+    private var tagQueue: Task<Void, Never>?
+    /// Сеанс меток: закрыли или открыли новое поверх — хвост прежней очереди ничего не пишет и не запоминает.
+    private var tagSession = 0
+    /// Зажатая стрелка: точки покажутся через 0,3 с после последнего повтора.
+    private var tagDotsRelease: Task<Void, Never>?
+    /// Режим «следовать»: метку записали — мост проверит выделение Finder (группировка, смарт-список тега).
+    /// `removed` — снятые метки: файл может уйти из смарт-списка тега.
+    var onTagged: ((_ url: URL, _ removed: [String]) -> Void)?
+    /// Режим «следовать»: `⌘Z` вернул метки файлу, которого нет на экране, — мост покажет его снова.
+    var onTagRestored: ((URL) -> Void)?
+    /// `⌘Z` дошёл до удаления — его отменяет мост Finder.
+    var onUndoTrash: ((URL) -> Void)?
     /// Режим «следовать»: панель взяла клавиатуру на время щелчка по «пилюле» — вернуть, когда появится просмотр
     /// ссылки (или по таймеру).
     private var keyboardLoan: Task<Void, Never>?
@@ -181,6 +203,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         viewerView.swipeNeighbor = { [weak self] forward in self?.swipeNeighbor(forward: forward) ?? .none }
         viewerView.onSwipe = { [weak self] forward in self?.swiped(forward: forward) ?? false }
         viewerView.onKeyPressed = { [weak self] isArrow in self?.input(.keyPressed(isArrow: isArrow)) }
+        viewerView.onArrowHeld = { [weak self] in self?.input(.arrowHeld) }
         viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
         viewerView.onShare = { [weak self] in self?.share() }
         viewerView.onLiveTextLatch = { [weak self] latched in self?.liveTextLatched(latched) }
@@ -381,7 +404,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             interception.update {
                 $0.spaceClosesViewer = preferences.spaceClosesViewer
                 $0.trashEnabled = preferences.trashEnabled
+                $0.tagsEnabled = preferences.tags
             }
+            tagNamesTask = preferences.tags ? Task { await FileTagger.colorTagNames() } : nil
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
             decodeSize = Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
@@ -454,6 +479,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         linkPreviewClosing = false
         swallowsMouseUp = false
         returnKeyboard()
+        sessionUndo.clear()
+        forgetTags()
         liveViewSettle?.cancel()
         infoTask?.cancel()
         infoCache.removeAll()
@@ -529,7 +556,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 ? String(localized: "Deleting works when the image was opened with Space in Finder")
                 : String(localized: "Moving to Trash is off — turn it on in Settings"))
         case .undo:
-            break
+            undo()
         case .first, .last:
             if isListPending { return }
             if directory?.moveToEdge(first: command == .first) == true { loadCurrent() }
@@ -543,7 +570,210 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             lookUp()
         case .share:
             share()
+        case .tag(let number):
+            toggleTag(number)
         }
+    }
+
+    // MARK: - Отмена
+
+    /// Действие над файлом сделано — `⌘Z` его отменит.
+    func recordUndo(_ entry: SessionUndo.Entry) {
+        guard state == .visible else { return }
+        sessionUndo.record(entry)
+    }
+
+    /// `⌘Z` в обоих режимах: отменить последнее действие сеанса.
+    func undo() {
+        guard state == .visible else { return }
+        // Через очередь меток: цифра, сразу ⌘Z — запись об этой метке появится в истории раньше, чем её снимут.
+        enqueueTagWork { session in
+            guard let entry = self.sessionUndo.undo() else {
+                self.showMessage(String(localized: "Nothing to restore"))
+                return
+            }
+            switch entry {
+            case .trash(let url):
+                self.onUndoTrash?(url)
+            case .tags(let url, let before):
+                await self.restoreTags(before, at: url, session: session)
+            case .move, .copy:
+                break  // перемещение в папки — следующая функция
+            }
+        }
+    }
+
+    // MARK: - Метки
+
+    /// `1`–`7` — переключить метку (цветной тег Finder) на показанном файле. Метки складываются; сообщения об успехе
+    /// нет — метку видно по точкам; ошибки — плашкой.
+    func toggleTag(_ number: Int) {
+        guard state == .visible, preferences.tags, (1...7).contains(number) else { return }
+        guard let url = displayedTagFile else {
+            showMessage(String(localized: "Image is still loading"))
+            return
+        }
+        enqueueTagWork { session in
+            guard let name = await self.tagNames()[number - 1] else {
+                self.showMessage(String(localized: "Label unavailable: add the color tag back in Finder settings"))
+                return
+            }
+            guard self.tagSession == session else { return }
+            do {
+                let result = try await FileTagger.toggle(name, at: url)
+                guard self.state == .visible, self.tagSession == session else { return }
+                self.recordUndo(.tags(url: url, before: result.before))
+                self.tagsChanged(result.after, of: url)
+                if self.mode == .following { self.onTagged?(url, TagToggle.contains(result.after, name) ? [] : [name]) }
+            } catch {
+                self.showTagFailure(error)
+            }
+        }
+    }
+
+    /// `⌘Z` по метке: вернуть теги файла, какими были до нажатия. Файл не на экране (пролистали дальше, ушёл из
+    /// смарт-списка тега) — показать его снова, как при отмене удаления: в «следовать» через мост, в своём списке сразу.
+    private func restoreTags(_ tags: [String], at url: URL, session: Int) async {
+        do {
+            // Что снимается: прежние теги из памяти, которых нет в возвращаемых (мост подождёт Finder).
+            let removed = (tagCache[url] ?? []).filter { !TagToggle.contains(tags, $0) }
+            let after = try await FileTagger.restore(tags, at: url)
+            guard state == .visible, tagSession == session else { return }
+            tagsChanged(after, of: url)
+            if mode == .following {
+                // Как отмена удаления: вернувшийся файл выделяется в Finder и показывается.
+                if url == followedURL { onTagged?(url, removed) } else { onTagRestored?(url) }
+            } else if url != displayedURL, let directory, let target = directory.images.firstIndex(of: url),
+                      self.directory?.move(by: target - directory.index) == true {
+                // Свой список — так же: показать файл, которому вернули метки.
+                loadCurrent()
+            }
+        } catch {
+            showTagFailure(error)
+        }
+    }
+
+    /// Нажатия по очереди: две цифры подряд не должны прочитать один и тот же список и затереть друг друга.
+    /// `work` получает сеанс — после каждого ожидания свериться, что он ещё тот.
+    private func enqueueTagWork(_ work: @escaping @MainActor (_ session: Int) async -> Void) {
+        let previous = tagQueue
+        let session = tagSession
+        tagQueue = Task {
+            await previous?.value
+            guard self.state == .visible, self.tagSession == session else { return }
+            await work(session)
+        }
+    }
+
+    /// Файл, который на экране: в своём списке — текущий, если он уже показан.
+    private var displayedTagFile: URL? {
+        if mode == .following { return displayedFollowedImage }
+        guard let url = displayedURL, url == directory?.current, loaded != nil else { return nil }
+        return url
+    }
+
+    private func tagNames() async -> [String?] {
+        if let resolvedTagNames { return resolvedTagNames }
+        let task = tagNamesTask ?? Task { await FileTagger.colorTagNames() }
+        tagNamesTask = task
+        let names = await task.value
+        if state == .visible { resolvedTagNames = names }
+        return names
+    }
+
+    private func showTagFailure(_ error: Error) {
+        guard state == .visible else { return }
+        switch FileTagger.failure(error) {
+        case .noPermission: showMessage(String(localized: "Can't change labels of this file"))
+        case .readOnlyVolume: showMessage(String(localized: "The disk is read-only"))
+        case .missing: showMessage(String(localized: "File not found"))
+        case .other: showMessage(String(localized: "Couldn't set the label"))
+        }
+    }
+
+    /// Теги файла поменялись (метка, `⌘Z`): точки и строка «Метки» в карточке — сразу.
+    private func tagsChanged(_ tags: [String], of url: URL) {
+        // Чтение, начатое до записи, принесло бы прежний список.
+        tagReads[url]?.cancel()
+        tagReads[url] = nil
+        tagCache[url] = tags
+        if url == displayedURL { showTagDots(for: url) }
+        if infoHold.state == .shown, url == currentURL { updateInfo() }
+    }
+
+    /// Цветные метки файла — индексы цветов в порядке меню Finder и имена, в порядке тегов файла.
+    private func colorLabels(of url: URL) -> [(color: Int, name: String)]? {
+        guard let tags = tagCache[url], let names = resolvedTagNames else { return nil }
+        return tags.compactMap { tag in
+            names.firstIndex { $0.map { TagToggle.same($0, tag) } ?? false }.map { ($0, tag) }
+        }
+    }
+
+    /// Точки показанного файла: известны — сразу; нет — прежние убираются, новые придут после чтения (неверные
+    /// точки не показываются никогда).
+    private func showTagDots(for url: URL) {
+        guard preferences.tags, let labels = colorLabels(of: url) else {
+            viewerView.setTagDots([], names: [])
+            if preferences.tags { prefetchTags([url], prune: false) }
+            return
+        }
+        viewerView.setTagDots(labels.map { FileTagger.menuOrderNSColors[$0.color] }, names: labels.map(\.name))
+    }
+
+    /// Строка «Метки: Красный, Синий» для карточки сведений — пока она открыта, точки спрятаны.
+    private func tagInfoLines(for url: URL) -> [String] {
+        guard preferences.tags, let labels = colorLabels(of: url), !labels.isEmpty else { return [] }
+        return [String(format: String(localized: "Labels: %@"), labels.map(\.name).joined(separator: ", "))]
+    }
+
+    /// Прочитать теги картинок, которых ещё нет в памяти. `prune` — пришло окно соседей целиком: помнятся только
+    /// показанная и они.
+    private func prefetchTags(_ urls: [URL], prune: Bool = true) {
+        guard state == .visible, preferences.tags else { return }
+        if prune {
+            let keep = Set(urls).union([displayedURL].compactMap { $0 })
+            tagCache = tagCache.filter { keep.contains($0.key) }
+        }
+        for url in urls where tagCache[url] == nil && tagReads[url] == nil {
+            tagReads[url] = Task {
+                let tags = (try? await FileTagger.tags(of: url)) ?? []
+                if self.resolvedTagNames == nil { _ = await self.tagNames() }
+                guard !Task.isCancelled, self.state == .visible else { return }
+                self.tagReads[url] = nil
+                // Пока читали, метку уже поставили — свежий список в памяти, прочитанный устарел.
+                guard self.tagCache[url] == nil else { return }
+                self.tagCache[url] = tags
+                if url == self.displayedURL { self.showTagDots(for: url) }
+                if self.infoHold.state == .shown, url == self.currentURL { self.updateInfo() }
+            }
+        }
+    }
+
+    /// Зажата стрелка: точки прячутся, показ — через 0,3 с после последнего повтора.
+    private func holdTagDots() {
+        viewerView.holdTagDots(true)
+        tagDotsRelease?.cancel()
+        tagDotsRelease = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self.viewerView.holdTagDots(false)
+        }
+    }
+
+    private func forgetTags() {
+        tagSession += 1
+        tagQueue?.cancel()
+        tagNamesTask?.cancel()
+        tagNamesTask = nil
+        resolvedTagNames = nil
+        tagReads.values.forEach { $0.cancel() }
+        tagReads.removeAll()
+        tagCache.removeAll()
+        tagQueue = nil
+        tagDotsRelease?.cancel()
+        tagDotsRelease = nil
+        viewerView.holdTagDots(false)
+        viewerView.setTagDots([], names: [])
     }
 
     // MARK: - Поворот, копирование, открытие
@@ -713,6 +943,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         rememberDisplayedZoom()
         viewerView.show(image, placement: zoomMemory.placement(for: url))
         displayedURL = url
+        showTagDots(for: url)
     }
 
     // MARK: - Live Text, поиск по изображению, «Поделиться»
@@ -819,8 +1050,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     /// Другая картинка или поворот: распознанное больше не ложится на экран.
     /// Новый просмотр поверх открытого (Пробел, `open -a`): режим `⌘`, распознанное и одолженная клавиатура — от
-    /// прежнего. До смены режима: `returnKeyboard` смотрит на него.
+    /// прежнего. До смены режима: `returnKeyboard` смотрит на него. История отмены — тоже от прежнего сеанса
+    /// (мост свою историю удалений начинает заново в `startFollowing`).
     private func resetLiveText() {
+        sessionUndo.clear()
+        forgetTags()
         runLive(liveHold.reset())
         lookUpPending = false
         forgetLiveText()
@@ -1213,6 +1447,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         case .keyPressed(let isArrow):
             run(infoHold.keyPressed(isArrow: isArrow))
             runLive(liveHold.keyPressed())
+        case .arrowHeld:
+            holdTagDots()
         }
     }
 
@@ -1243,7 +1479,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         guard let url = currentURL else { return }
         infoTask?.cancel()
         if let lines = infoCache[url] {
-            viewerView.showInfo(lines)
+            viewerView.showInfo(lines + tagInfoLines(for: url))
             return
         }
         infoTask = Task {
@@ -1251,10 +1487,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             guard !Task.isCancelled, state == .visible, currentURL == url, infoHold.state == .shown else { return }
             if let lines {
                 infoCache[url] = lines
-                viewerView.showInfo(lines)
+                viewerView.showInfo(lines + tagInfoLines(for: url))
             } else {
                 // Сервис не ответил — хотя бы имя файла; не кэшируем, в следующий раз спросим снова.
-                viewerView.showInfo([url.lastPathComponent])
+                viewerView.showInfo([url.lastPathComponent] + tagInfoLines(for: url))
             }
         }
     }
@@ -1273,7 +1509,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             of: directory.index, count: images.count, url: { images[$0] }, isImage: { _ in true },
             forward: PrefetchWindow.forward, backward: PrefetchWindow.forward
         )
-        cache.prefetch(neighbors.prefetchOrder(backwards: travelsBackward), around: directory.current, maxPixelSize: decodeSize)
+        let order = neighbors.prefetchOrder(backwards: travelsBackward)
+        cache.prefetch(order, around: directory.current, maxPixelSize: decodeSize)
+        prefetchTags([directory.current].compactMap { $0 } + order)
     }
 
     /// Режим «следовать»: Finder встал на `current`, мост прочитал соседей в порядке окна.
@@ -1300,10 +1538,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private func prefetchFollowNeighbors() {
         guard let followNeighbors, followNeighbors.around == followedURL else { return }
-        cache.prefetch(
-            followNeighbors.neighbors.prefetchOrder(backwards: travelsBackward), around: followNeighbors.around,
-            maxPixelSize: decodeSize
-        )
+        let order = followNeighbors.neighbors.prefetchOrder(backwards: travelsBackward)
+        cache.prefetch(order, around: followNeighbors.around, maxPixelSize: decodeSize)
+        prefetchTags([followNeighbors.around] + order)
     }
 
     // MARK: - Смахивание

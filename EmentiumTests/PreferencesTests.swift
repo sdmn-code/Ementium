@@ -27,6 +27,7 @@ final class PreferencesTests {
         #expect(!viewer.trashEnabled)  // удаление по ⌘⌫ — только если включить
         #expect(viewer.spaceClosesViewer)
         #expect(viewer.animate)
+        #expect(viewer.tags)  // метки клавишами 1–7 — включены
         #expect(store.bool(forKey: Preferences.Key.interceptionEnabled))
         #expect(store.bool(forKey: Preferences.Key.showMenuBarIcon))
     }

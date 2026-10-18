@@ -39,6 +39,8 @@ nonisolated struct HoldModifiers: OptionSet, Equatable, Sendable {
 nonisolated enum ViewerInput: Equatable, Sendable {
     case modifiers(HoldModifiers)
     case keyPressed(isArrow: Bool)
+    /// Стрелка зажата (автоповтор) — точки меток прячутся до остановки.
+    case arrowHeld
 }
 
 /// Сведения о снимке — пока удерживается `⌥`. Чистый автомат; таймер и показ — у вызывающего.

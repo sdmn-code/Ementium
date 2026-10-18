@@ -13,6 +13,8 @@ final class ViewerView: NSView {
     /// Режим «свой список»: нажатия — для сведений о снимке по `⌥` и Live Text по `⌘` (модификаторы ловит
     /// монитор контроллера: после щелчка по тексту клавиатура у оверлея VisionKit, а не у просмотра).
     var onKeyPressed: ((_ isArrow: Bool) -> Void)?
+    /// Стрелка зажата (автоповтор) — свой список; в режиме «следовать» об этом сообщает перехват.
+    var onArrowHeld: (() -> Void)?
     /// Кнопка «Поделиться» рядом с кнопками VisionKit.
     var onShare: (() -> Void)?
     /// Кнопка Live Text (подсветить весь текст) — фиксирует режим, `⌘` можно отпустить.
@@ -67,6 +69,13 @@ final class ViewerView: NSView {
     private var infoConstraints: [InfoPanelPosition: [NSLayoutConstraint]] = [:]
     private var infoPosition = InfoPanelPosition.topRight
     private var animatesInfo = true
+    private var isInfoShown = false
+    /// Точки меток показанного файла — в правом верхнем углу экрана (не картинки: не ездят при масштабе и
+    /// смахивании).
+    private let tagDots = NSStackView()
+    private var tagColors: [NSColor] = []
+    /// Зажата стрелка — точки спрятаны до остановки.
+    private var tagDotsHeld = false
     /// Live Text: оверлей VisionKit ровно на картинке — масштабируется и сдвигается с ней, `contentsRect` — вся
     /// его площадь, поворот задаёт анализ. Так рамки текста совпадают при любом масштабе и повороте; оверлей на весь
     /// экран при увеличении съезжает (прототип `LiveTextProbe`).
@@ -158,6 +167,7 @@ final class ViewerView: NSView {
         ])
 
         setUpInfoPanel()
+        setUpTagDots()
     }
 
     private func setUpInfoPanel() {
@@ -291,6 +301,7 @@ final class ViewerView: NSView {
         zoom = nil
         messageLabel.stringValue = "\(fileName)\n" + String(localized: "Couldn't open")
         messageLabel.isHidden = false
+        setTagDots([], names: [])
         applyZoom(animated: false)
     }
 
@@ -304,6 +315,8 @@ final class ViewerView: NSView {
         isDragging = false
         zoomBadge.alphaValue = 0
         infoPanel.alphaValue = 0
+        isInfoShown = false
+        setTagDots([], names: [])
         applyZoom(animated: false)
     }
 
@@ -842,6 +855,8 @@ final class ViewerView: NSView {
             ]))
         }
         infoLabel.attributedStringValue = text
+        isInfoShown = true
+        updateTagDots(animated: true)
         guard infoPanel.alphaValue < 1 else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animatesInfo ? 0.15 : 0
@@ -850,10 +865,81 @@ final class ViewerView: NSView {
     }
 
     func hideInfo() {
+        isInfoShown = false
+        updateTagDots(animated: true)
         guard infoPanel.alphaValue > 0 else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animatesInfo ? 0.15 : 0
             infoPanel.animator().alphaValue = 0
+        }
+    }
+
+    // MARK: - Точки меток
+
+    private func setUpTagDots() {
+        tagDots.orientation = .horizontal
+        tagDots.spacing = 6
+        tagDots.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        // Подложка — чтобы точки читались и на светлом фоне, и над краем картинки.
+        tagDots.wantsLayer = true
+        tagDots.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        tagDots.layer?.cornerRadius = 12
+        tagDots.alphaValue = 0
+        tagDots.translatesAutoresizingMaskIntoConstraints = false
+        tagDots.setAccessibilityElement(true)
+        tagDots.setAccessibilityRole(.group)
+        addSubview(tagDots)
+        // Отступ — как у карточки сведений.
+        NSLayoutConstraint.activate([
+            tagDots.topAnchor.constraint(equalTo: topAnchor, constant: 24),
+            tagDots.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+        ])
+    }
+
+    /// Метки показанного файла (цвета в порядке меню Finder) и их имена для VoiceOver. Пусто — точек нет.
+    /// Смена картинки — сразу, в том же кадре; появление из пустого — мягко.
+    func setTagDots(_ colors: [NSColor], names: [String]) {
+        let appearing = tagColors.isEmpty && !colors.isEmpty
+        tagColors = colors
+        tagDots.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for color in colors {
+            let dot = NSView()
+            dot.wantsLayer = true
+            dot.layer?.backgroundColor = color.cgColor
+            dot.layer?.cornerRadius = 6
+            dot.layer?.borderWidth = 1
+            dot.layer?.borderColor = NSColor.white.withAlphaComponent(0.5).cgColor
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 12), dot.heightAnchor.constraint(equalToConstant: 12),
+            ])
+            tagDots.addArrangedSubview(dot)
+        }
+        tagDots.setAccessibilityLabel(names.joined(separator: ", "))
+        // Без меток — не элемент: невидимая пустая группа сбивала бы VoiceOver.
+        tagDots.setAccessibilityElement(!colors.isEmpty)
+        updateTagDots(animated: appearing)
+    }
+
+    /// Зажата стрелка — точки прячутся (сразу); отпустили — показ.
+    func holdTagDots(_ held: Bool) {
+        guard held != tagDotsHeld else { return }
+        tagDotsHeld = held
+        updateTagDots(animated: !held)
+    }
+
+    /// Видны, только если меток есть, стрелка не зажата и не открыта карточка сведений (в ней строка «Метки»).
+    private func updateTagDots(animated: Bool) {
+        let visible: CGFloat = !tagColors.isEmpty && !tagDotsHeld && !isInfoShown ? 1 : 0
+        guard tagDots.alphaValue != visible else { return }
+        // Прятать — всегда сразу: неверные точки не должны висеть ни кадра.
+        guard animated, visible == 1, animatesInfo else {
+            tagDots.alphaValue = visible
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            tagDots.animator().alphaValue = visible
         }
     }
 
@@ -863,9 +949,11 @@ final class ViewerView: NSView {
 
     override func keyDown(with event: NSEvent) {
         onKeyPressed?((123...126).contains(event.keyCode))
+        if event.isARepeat, (123...126).contains(event.keyCode) { onArrowHeld?() }
         guard let command = ViewerCommand(event: event) else { return }
-        // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно.
+        // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно, зажатая цифра щёлкала бы меткой.
         if command == .close, event.isARepeat { return }
+        if case .tag = command, event.isARepeat { return }
         // Пробел закрывает, только если это включено в настройках; Esc закрывает всегда.
         if command == .close, event.keyCode == 49, !spaceClosesViewer { return }
         handle(command)

@@ -27,6 +27,10 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         case cancelled
         /// `⌘Z`, а в этом сеансе ничего не удаляли.
         case nothingToUndo
+        /// `⌘Z`, а Finder ещё удаляет или возвращает другой файл — `url` (последний удалённый) не трогали.
+        case undoBusy(URL)
+        /// Сняли метку в смарт-списке этого тега — файл (`URL`) ушёл из окна, а других картинок там нет.
+        case windowEmptied(URL)
         /// Файл уже на месте — `⌘Z` не отправлен.
         case alreadyBack(URL)
     }
@@ -91,6 +95,32 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     private var swipeSelectTimer: Timer?
     /// Удалённые в этом сеансе просмотра — `⌘Z` возвращает только их (иначе отменили бы чужое действие в Finder).
     private var trashed: [URL] = []
+    /// Метку поставили или сняли — ждём, как Finder перестроит окно (`didTag`).
+    private struct TagCheck {
+        let url: URL
+        /// Снятые метки: файл мог уйти из смарт-списка, и остались в нём только те, на ком хоть одна ещё стоит.
+        let removed: [String]
+        let deadline: Date
+        /// Файл видели в окне после метки. «Ушёл» — только если видели, а потом пропал: не найденный сразу файл
+        /// может быть ещё не созданным элементом «значков» (Finder создаёт их лениво).
+        var seenInWindow = false
+    }
+    private var tagCheck: TagCheck?
+    private var tagCheckTimer: Timer?
+    /// Ожидание после снятия метки прервали листанием, а файл ещё в окне: досматриваем, уйдёт ли он (смарт-список
+    /// убирает его через 1,6–3 с), — иначе он остался бы в соседях, и смахивание назад показало бы ушедший файл.
+    private var departure: TagCheck?
+    private var departureTimer: Timer?
+    /// `⌘Z` по метке: ждём, когда Finder вернёт файл в окно (`restoredTag`).
+    private var restoreTimer: Timer?
+    private var restoreDeadline = Date.distantPast
+    private var restoreURL: URL?
+    /// Сколько ждать, уберёт ли Finder файл из смарт-списка тега после снятия метки.
+    private static let tagSettleTime: TimeInterval = 3
+    /// Сколько досматривать, уйдёт ли файл, если ожидание прервали листанием.
+    private static let departureTime: TimeInterval = 5
+    /// Как часто смотреть, пока ждём: каждый раз — поиск файла по всему окну (AX), чаще — дорого в больших папках.
+    private static let tagCheckInterval: TimeInterval = 0.4
     /// Идёт удаление или возврат: ждём, пока файл исчезнет (появится).
     private var trashOperation: TrashOperation?
     private var trashTimer: Timer?
@@ -173,6 +203,9 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.desktopOrder = nil
             self.trashed.removeAll()
             self.cancelTrash()
+            self.cancelTagCheck()
+            self.cancelRestore()
+            self.cancelDeparture()
             self.scheduleNeighbors()
         }
     }
@@ -188,6 +221,11 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             self.desktopOrder = nil
             self.trashed.removeAll()
             self.cancelTrash()
+            // Закрыли, пока ждали Finder после метки: выделение должно остаться на показанной картинке.
+            if let check = self.tagCheck { self.reselectTagged(check.url) }
+            self.cancelTagCheck()
+            self.cancelRestore()
+            self.cancelDeparture()
             self.execute(self.navigation?.finish() ?? [])
             self.forgetNavigationIfDone()
         }
@@ -233,6 +271,40 @@ nonisolated final class FinderBridge: @unchecked Sendable {
 
     private func command() {
         commandCount.withLock { $0 += 1 }
+    }
+
+    /// Метку на показанном файле поставили или сняли. Finder перестраивает окно сам (прототип FinderTagProbe):
+    /// - группировка по тегам — файл переезжает в другую группу, выделение снимается (стрелка пошла бы с начала);
+    /// - сортировка по тегам — выделение едет за файлом;
+    /// - смарт-список тега — после снятия метки Finder сначала снимает выделение, а сам файл убирает позже; выделить
+    ///   его снова в этот момент нельзя: выделенный файл Finder из результатов не убирает, и листание шло бы по нему.
+    /// Поэтому: выделение на месте — ничего; метку поставили, а выделения нет — выделить файл снова; метку сняли —
+    /// до `tagSettleTime` ждём, уберёт ли Finder файл: убрал — следующая картинка, как при удалении (соседи уже
+    /// прочитаны для предзагрузки); нет — это группировка, выделить снова. Стрелка в это время выделяет файл сразу.
+    func didTag(_ url: URL, removed: [String]) {
+        command()
+        thread.perform {
+            self.cancelRestore()
+            // Прежняя проверка того же файла ещё идёт (сняли красную, тут же поставили синюю) — снятие не забывать.
+            let earlier = self.tagCheck?.url == url ? self.tagCheck?.removed ?? [] : []
+            self.tagCheck = TagCheck(
+                url: url, removed: earlier + removed, deadline: Date().addingTimeInterval(Self.tagSettleTime)
+            )
+            self.scheduleTagCheck(after: 0.3)
+        }
+    }
+
+    /// `⌘Z` вернул метки файлу, которого нет на экране (ушёл из смарт-списка тега, пролистали дальше): как при отмене
+    /// удаления — когда Finder покажет файл в окне (в смарт-список он возвращается через секунду-другую), выделить
+    /// его и показать; соседи читаются заново — прежние были без него.
+    func restoredTag(_ url: URL) {
+        command()
+        thread.perform {
+            self.cancelTagCheck()
+            self.restoreDeadline = Date().addingTimeInterval(Self.tagSettleTime + 1)
+            self.restoreURL = url
+            self.scheduleRestoreCheck(url, after: 0.3)
+        }
     }
 
     /// `⌘Z` в просмотре: вернуть последнюю удалённую в этом сеансе.
@@ -349,10 +421,15 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         // Перелистнули — отложенное удаление показанной картинки больше не к месту.
         pendingTrash?.invalidate()
         pendingTrash = nil
+        // Ждали, уберёт ли Finder файл после снятия метки, — стрелка не ждёт: файл ещё в окне — выделяем его, шаг
+        // пойдёт от него; уже ушёл — показана следующая картинка, и шаг вперёд этим и сделан. Ждали, вернёт ли файл
+        // после ⌘Z, — стрелка важнее.
+        if tagCheck != nil, resolveTagCheck(finalCheck: true), key.isForward { return }
+        cancelRestore()
         guard let current = navigation, !current.isFinishing, trashOperation == nil else { return }
-        // Рабочий стол: стрелка Finder там идёт по пространству и на следующий ряд не переносится — стрелок не
-        // шлём, а сразу выделяем следующую картинку в порядке рядов.
-        if viewKind == .desktop {
+        // Рабочий стол и сгруппированные «значки»: стрелка Finder там на следующий ряд (и в другую группу) не
+        // переносится — стрелок не шлём, а сразу выделяем следующую картинку в порядке рядов.
+        if viewKind == .desktop || isGroupedIcons {
             performDesktopStep(forward: key.isForward)
             return
         }
@@ -404,7 +481,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// Ищет ближайшую картинку в сторону `direction` среди элементов вида и прокладывает к ней путь.
     /// Если среди подгруженных (значки, галерея) картинки нет — путь к последнему подгруженному элементу:
     /// Finder прокрутит и подгрузит следующие (`.lookAgain`). `nil` — заглянуть нельзя (рабочий стол,
-    /// группы в значках, выделенный не найден) — тогда шагаем по одному.
+    /// выделенный не найден) — тогда шагаем по одному.
     private func lookahead(_ direction: ArrowKey) -> Lookahead? {
         guard let (items, positions, start) = displayedItems() else { return nil }
 
@@ -437,7 +514,7 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     }
 
     /// Элементы вида в экранном порядке, их положения (только для значков, галереи и рабочего стола) и индекс
-    /// выделенного. `nil` — заглянуть нельзя (группы в значках, выделенный не найден).
+    /// выделенного. `nil` — заглянуть нельзя (вид не поддерживается, выделенный не найден).
     private func displayedItems() -> (items: [AXUIElement], positions: [CGPoint?], selected: Int)? {
         guard let viewElement,
               let selected = elements(attribute(viewElement, kAXSelectedRowsAttribute))?.first
@@ -478,10 +555,11 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             items = rows
         } else {
             let children = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
-            // Значки и галерея: элементы лежат внутри секций (AXList). Несколько секций — группировка,
-            // у каждой своя сетка; путь между ними не прокладываем.
+            // Значки и галерея: элементы лежат внутри секций (AXList). Несколько секций — группировка (например,
+            // по тегам — так собирают отмеченные снимки): у каждой своя сетка, группы на экране — сверху вниз,
+            // поэтому порядок по рядам ниже сам выстраивает их группа за группой. Шаг там — выделением через AX
+            // (`isGroupedIcons`), стрелками Finder между сетками не пройти.
             let sections = children.filter { attribute($0, kAXRoleAttribute) as? String == kAXListRole }
-            if viewKind == .icons, sections.count > 1 { return nil }
             items = sections.isEmpty ? children : sections.flatMap { elements(attribute($0, kAXChildrenAttribute)) ?? [] }
         }
         if viewKind == .icons || viewKind == .gallery {
@@ -500,6 +578,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// (выделение через AX работает во всех видах, прототип FinderTrashProbe). В «значках» и «галерее»
     /// элементы подгружены не все — тогда это крайняя из подгруженных.
     private func performEdge(first: Bool) {
+        if tagCheck != nil { resolveTagCheck(finalCheck: true) }
+        cancelRestore()
         guard trashOperation == nil, let navigation, navigation.isSettled, isFinderReady,
               let focused = focusedViewElement() else { return }
         viewKind = kind(of: focused)
@@ -522,6 +602,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     }
 
     private func performSwipeSelect(_ url: URL, ticket: Int, steps: Int) {
+        if tagCheck != nil { resolveTagCheck(finalCheck: true) }
+        cancelRestore()
         guard swipeCount.withLock({ $0 }) == ticket, stepCount.withLock({ $0 }) == steps else {
             log.debug("Смахивание → Finder: пропуск, устарело (смахнули дальше или нажали стрелку)")
             return
@@ -611,18 +693,20 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         return Self.outward(from: selected, count: items.count).first { self.cachedURL(at: $0, in: items) == url }
     }
 
-    /// Шаг стрелкой на рабочем столе: следующая картинка в порядке рядов — сразу выделением через AX. Считается
-    /// от того, что выделено в Finder сейчас, поэтому автомат стрелок здесь не нужен: даже если выделение
-    /// ушло на не-картинку, стрелка приведёт к ближайшей картинке. Впереди картинок нет — стоим, как в остальных видах.
+    /// Шаг стрелкой на рабочем столе и в сгруппированных «значках»: следующая картинка в порядке рядов (групп) —
+    /// сразу выделением через AX. Считается от того, что выделено в Finder сейчас, поэтому автомат стрелок здесь
+    /// не нужен: даже если выделение ушло на не-картинку, стрелка приведёт к ближайшей картинке. Впереди картинок
+    /// нет — стоим, как в остальных видах.
     private func performDesktopStep(forward: Bool) {
+        if tagCheck != nil { resolveTagCheck(finalCheck: true) }
         guard isFinderReady, let focused = focusedViewElement() else {
             log.debug("Рабочий стол: шаг пропущен — Finder не готов")
             return
         }
         viewKind = kind(of: focused)
         viewElement = focused
-        guard viewKind == .desktop, let (items, _, selected) = displayedItems() else {
-            log.debug("Рабочий стол: шаг пропущен — не прочитал значки или выделение")
+        guard viewKind == .desktop || isGroupedIcons, let (items, _, selected) = displayedItems() else {
+            log.debug("Рабочий стол / группы: шаг пропущен — не прочитал значки или выделение")
             return
         }
         let ticket = stepCount.withLock { $0 }
@@ -668,6 +752,8 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     /// `⌘⌫` удаляет то, что выделено в Finder, поэтому всё проверяется прямо перед отправкой:
     /// ничего не в полёте, Finder активен, выделен ровно показанный файл.
     private func performTrash(_ url: URL) {
+        if tagCheck != nil { resolveTagCheck(finalCheck: true) }
+        cancelRestore()
         pendingTrash?.invalidate()
         pendingTrash = nil
         // Пользователь успел перелистнуть — удалять уже нечего, молча.
@@ -684,7 +770,9 @@ nonisolated final class FinderBridge: @unchecked Sendable {
         viewKind = kind(of: focused)
         viewElement = focused
         // На рабочем столе не удаляем: поведение Finder после ⌘⌫ там прототипом не проверено.
-        guard viewKind != .desktop, let (items, _, index) = displayedItems(), findURL(items[index], depth: 2) == url else {
+        // В сгруппированных «значках» — тоже: поведение Finder после ⌘⌫ там прототипом не проверено.
+        guard viewKind != .desktop, !isGroupedIcons, let (items, _, index) = displayedItems(),
+              findURL(items[index], depth: 2) == url else {
             onTrash(.notHere)
             return
         }
@@ -711,7 +799,16 @@ nonisolated final class FinderBridge: @unchecked Sendable {
     }
 
     private func performUndoTrash() {
-        guard trashOperation == nil, navigation != nil, isFinderReady else { return }
+        guard navigation != nil, isFinderReady else {
+            // Запись из истории сеанса уже снята — вернуть её, иначе стеки разойдутся.
+            if let url = trashed.last { onTrash(.undoBusy(url)) }
+            return
+        }
+        guard trashOperation == nil else {
+            // Запись об удалении из истории сеанса уже снята — пусть вернётся туда, ⌘Z повторят.
+            if let url = trashed.last { onTrash(.undoBusy(url)) }
+            return
+        }
         guard let url = trashed.last else {
             onTrash(.nothingToUndo)
             return
@@ -800,6 +897,231 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             scheduleNeighbors()
         }
         onTrash(operation.isUndo ? .restored(operation.url) : .moved(deleted: operation.url, next: shown))
+    }
+
+    /// Стоит ли на файле хоть одна из этих меток (имена — без учёта регистра и «ё», как у Finder): смарт-список
+    /// отбирает по одной из них. Чтение атрибута — миллисекунды.
+    private nonisolated static func carriesAny(_ tags: [String], _ url: URL) -> Bool {
+        let names = (try? URL(fileURLWithPath: url.path).resourceValues(forKeys: [.tagNamesKey]).tagNames) ?? []
+        return tags.contains { TagToggle.contains(names, $0) }
+    }
+
+    /// «Значки» с группировкой: несколько секций, у каждой своя сетка.
+    private var isGroupedIcons: Bool {
+        guard viewKind == .icons, let viewElement else { return false }
+        let children = elements(attribute(viewElement, kAXChildrenAttribute)) ?? []
+        return children.filter { attribute($0, kAXRoleAttribute) as? String == kAXListRole }.count > 1
+    }
+
+    /// Элементы вида для поиска файла (порядок не важен). Запасной путь — секции «значков» напрямую, если
+    /// упорядочить элементы не вышло.
+    private func searchableItems() -> [AXUIElement]? {
+        if let (items, _) = orderedItems() { return items }
+        guard viewKind == .icons, let viewElement else { return nil }
+        let sections = (elements(attribute(viewElement, kAXChildrenAttribute)) ?? [])
+            .filter { attribute($0, kAXRoleAttribute) as? String == kAXListRole }
+        let items = sections.flatMap { elements(attribute($0, kAXChildrenAttribute)) ?? [] }
+        return items.isEmpty ? nil : items
+    }
+
+    /// Выделить файл после метки, не дожидаясь Finder (просмотр закрывается).
+    private func reselectTagged(_ url: URL) {
+        guard let focused = focusedViewElement() else { return }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard selectedItems(of: focused).first.flatMap({ findURL($0, depth: 2) }) != url,
+              let item = searchableItems()?.first(where: { findURL($0, depth: 2) == url }) else { return }
+        setSelection(item)
+    }
+
+    private func scheduleRestoreCheck(_ url: URL, after delay: TimeInterval) {
+        restoreTimer?.invalidate()
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in self?.checkRestored(url) }
+        RunLoop.current.add(timer, forMode: .default)
+        restoreTimer = timer
+    }
+
+    private func watchDeparture(_ check: TagCheck) {
+        departure = TagCheck(url: check.url, removed: check.removed, deadline: Date().addingTimeInterval(Self.departureTime))
+        departure?.seenInWindow = true
+        scheduleDepartureCheck()
+    }
+
+    private func scheduleDepartureCheck() {
+        departureTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.tagCheckInterval, repeats: false) { [weak self] _ in self?.checkDeparture() }
+        RunLoop.current.add(timer, forMode: .default)
+        departureTimer = timer
+    }
+
+    private func cancelDeparture() {
+        departure = nil
+        departureTimer?.invalidate()
+        departureTimer = nil
+    }
+
+    private func checkDeparture() {
+        departureTimer = nil
+        guard let watched = departure, trashOperation == nil, isFinderReady, let focused = focusedViewElement() else {
+            cancelDeparture()
+            return
+        }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard let items = searchableItems() else {
+            cancelDeparture()
+            return
+        }
+        if items.contains(where: { findURL($0, depth: 2) == watched.url }) {
+            if Date() < watched.deadline { scheduleDepartureCheck() } else { cancelDeparture() }
+            return
+        }
+        cancelDeparture()
+        if navigation?.shown == watched.url, navigation?.isSettled == true {
+            // Вернулись на сам этот файл, а он ушёл — как обычно: следующая картинка.
+            tagCheck = watched
+            resolveTagCheck(finalCheck: true)
+        } else {
+            log.notice("Метка: файл ушёл из окна Finder после листания — соседи заново")
+            lastNeighbors = nil
+            itemURLs = nil
+            scheduleNeighbors()
+        }
+    }
+
+    private func cancelRestore() {
+        restoreTimer?.invalidate()
+        restoreTimer = nil
+        restoreURL = nil
+    }
+
+    private func checkRestored(_ url: URL) {
+        restoreTimer = nil
+        guard restoreURL == url, trashOperation == nil, navigation != nil, isFinderReady, let focused = focusedViewElement() else { return }
+        viewKind = kind(of: focused)
+        viewElement = focused
+        guard let item = searchableItems()?.first(where: { findURL($0, depth: 2) == url }) else {
+            if Date() < restoreDeadline {
+                scheduleRestoreCheck(url, after: Self.tagCheckInterval)
+            } else {
+                log.notice("Метка возвращена, но Finder не показал файл в окне")
+            }
+            return
+        }
+        restoreURL = nil
+        guard setSelection(item) else { return }
+        log.notice("Метка возвращена — показываю файл снова")
+        neighborTimer?.invalidate()
+        navigation = FinderNavigation(showing: url)
+        lastNeighbors = nil
+        itemURLs = nil
+        onShow(url)
+        scheduleNeighbors()
+    }
+
+    private func cancelTagCheck() {
+        tagCheck = nil
+        tagCheckTimer?.invalidate()
+        tagCheckTimer = nil
+    }
+
+    private func scheduleTagCheck(after delay: TimeInterval) {
+        tagCheckTimer?.invalidate()
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in self?.resolveTagCheck(finalCheck: false) }
+        RunLoop.current.add(timer, forMode: .default)
+        tagCheckTimer = timer
+    }
+
+    /// `finalCheck` — решить сейчас, не дожидаясь Finder (нажата стрелка). `true` — файл ушёл из окна, и показана
+    /// следующая картинка.
+    @discardableResult
+    private func resolveTagCheck(finalCheck: Bool) -> Bool {
+        guard var check = tagCheck else { return false }
+        let url = check.url
+        func done() { cancelTagCheck() }
+        /// Подождать ещё (сняли метку, срок не вышел, не торопят) — запомнив, что файл видели.
+        func waitMore() -> Bool {
+            guard !check.removed.isEmpty, !finalCheck, Date() < check.deadline else { return false }
+            tagCheck = check
+            scheduleTagCheck(after: Self.tagCheckInterval)
+            return true
+        }
+        func forgetPlaces() {
+            lastNeighbors = nil
+            itemURLs = nil
+            scheduleNeighbors()
+        }
+        guard trashOperation == nil, let navigation, navigation.isSettled, navigation.shown == url, isFinderReady,
+              let focused = focusedViewElement() else {
+            done()
+            return false
+        }
+        // Окно могло перестроиться — заново берём элемент вида с фокусом.
+        viewKind = kind(of: focused)
+        viewElement = focused
+        if selectedItems(of: focused).first.flatMap({ findURL($0, depth: 2) }) == url {
+            // Выделение на месте (сортировка по тегам, обычное окно). Сняли метку — Finder может ещё снять
+            // выделение и убрать файл: смотрим дальше до срока.
+            check.seenInWindow = true
+            if waitMore() { return false }
+            done()
+            // Не дождались — листают: сняли метку — досмотреть, не уйдёт ли файл из окна.
+            if finalCheck, !check.removed.isEmpty { watchDeparture(check) }
+            // При сортировке по тегам файл переехал — соседи у него другие.
+            forgetPlaces()
+            return false
+        }
+        guard let items = searchableItems() else {
+            log.notice("Метка: не прочитал окно Finder — выделение не трогаю")
+            done()
+            return false
+        }
+        if let item = items.first(where: { findURL($0, depth: 2) == url }) {
+            // Файл ещё в окне. Метку сняли — возможно, это смарт-список, и Finder вот-вот его уберёт: ждём.
+            check.seenInWindow = true
+            if waitMore() { return false }
+            done()
+            if finalCheck, !check.removed.isEmpty { watchDeparture(check) }
+            log.notice("Метка: Finder снял выделение — выделяю файл снова")
+            setSelection(item)
+            self.navigation = FinderNavigation(showing: url)
+            // Файл переехал в другую группу — места в окне и соседи другие.
+            forgetPlaces()
+            return false
+        }
+        // Файла среди элементов окна нет. Ушёл он, только если метку сняли и мы его после этого в окне видели:
+        // иначе это может быть ещё не созданный элемент «значков» — подождать, а не дождались — ничего не трогать.
+        guard !check.removed.isEmpty, check.seenInWindow else {
+            if waitMore() { return false }
+            done()
+            forgetPlaces()
+            return false
+        }
+        done()
+        // Файл ушёл из окна (смарт-список тега): ближайший сосед впереди, иначе позади — как при удалении. Окно
+        // отбирает файлы по снятой метке, значит, в нём остались только те, на ком хоть одна из снятых стоит:
+        // соседи, прочитанные, пока Finder ещё держал строку раньше ушедшего файла, не годятся (быстрое снятие).
+        let neighbors = lastNeighbors?.shown == url ? lastNeighbors?.neighbors : nil
+        let stillTagged = { (candidate: URL) in Self.carriesAny(check.removed, candidate) }
+        let candidates = ((neighbors?.forward ?? []) + (neighbors?.backward ?? [])).filter(stillTagged)
+        for candidate in candidates {
+            guard let item = items.first(where: { findURL($0, depth: 2) == candidate }), setSelection(item) else { continue }
+            log.notice("Метка: файл ушёл из окна Finder через \(String(format: "%.1f", Self.tagSettleTime - check.deadline.timeIntervalSinceNow), privacy: .public) с — показываю следующую картинку")
+            neighborTimer?.invalidate()
+            self.navigation = FinderNavigation(showing: candidate)
+            lastNeighbors = nil
+            itemURLs = nil
+            onShow(candidate)
+            scheduleNeighbors()
+            return true
+        }
+        // Соседи неизвестны или тоже ушли — если картинок с этой меткой в окне не осталось, просмотр закрывается, как
+        // при удалении. Элемент без адреса — не картинка: в опустевшем смарт-списке Finder держит такой.
+        if items.allSatisfy({ findURL($0, depth: 2).map { !ImageDirectory.isImage($0) || !stillTagged($0) } ?? true }) {
+            log.notice("Метка: файл ушёл из окна Finder, картинок там нет")
+            onTrash(.windowEmptied(url))
+        }
+        return false
     }
 
     private func reselectIfNeeded(_ url: URL) {

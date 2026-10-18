@@ -94,6 +94,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.model.onOpenAccessibilitySettings = { [weak self] in self?.permissions.openAccessibilitySettings() }
         viewer.onFollowingEnded = { [weak self] in self?.bridge.stopFollowing() }
         viewer.onOpenSettings = { [weak self] in self?.showSettings() }
+        viewer.onTagged = { [weak self] url, removed in self?.bridge.didTag(url, removed: removed) }
+        viewer.onTagRestored = { [weak self] url in
+            guard let self else { return }
+            // Ответ моста о вернувшемся файле не должен потеряться как «прежнее смахивание».
+            viewer.dropSwipeLead()
+            bridge.restoredTag(url)
+        }
+        viewer.onUndoTrash = { [weak self] _ in
+            guard let self else { return }
+            viewer.dropSwipeLead()
+            bridge.undoTrash()
+        }
         viewer.onFollowResync = { [weak self] in self?.bridge.rereadNeighbors() }
         viewer.onFollowSelect = { [weak self] url in
             // Как и для стрелок с клавиатуры: только пока Finder активен.
@@ -219,9 +231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case .trashOff:
             viewer.showMessage(String(localized: "Moving to Trash is off — turn it on in Settings"))
-        case .undoTrash:
-            viewer.dropSwipeLead()
-            bridge.undoTrash()
+        case .undo:
+            viewer.undo()
         case .edge(let first):
             viewer.dropSwipeLead()
             bridge.jumpToEdge(first: first)
@@ -235,6 +246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewer.lookUp()
         case .share:
             viewer.share()
+        case .tag(let number):
+            viewer.toggleTag(number)
         case .step, .pass, .swallow:
             break
         }
@@ -243,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleTrash(_ event: FinderBridge.TrashEvent) {
         switch event {
         case .moved(let deleted, let next):
+            viewer.recordUndo(.trash(deleted))
             // Событие от прошлого сеанса просмотра (закрыли и открыли снова, пока оно шло) — не наше. Или, пока
             // шло удаление, смахнули дальше: просмотр сверится с Finder сам — пусть знает, где теперь выделение.
             guard viewer.followedFile == deleted else {
@@ -269,6 +283,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewer.showMessage(String(localized: "Selection changed — press ⌘⌫ again"))
         case .nothingToUndo:
             viewer.showMessage(String(localized: "Nothing to restore"))
+        case .windowEmptied(let url):
+            // Событие о показанном файле — иначе (успели смахнуть, открыли новый просмотр) не наше.
+            if viewer.followedFile == url { endFollowing() }
+        case .undoBusy(let url):
+            viewer.recordUndo(.trash(url))
+            viewer.showMessage(String(localized: "Finder is still working — press ⌘Z again"))
         case .alreadyBack:
             viewer.showMessage(String(localized: "The file is already back"))
         }

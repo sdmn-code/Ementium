@@ -16,7 +16,8 @@ The interface is in English and Russian (follows the system language). Detailed 
 - Hold `⌥` for photo info: camera, lens, exposure, date, location.
 - Hold `⌘` for Live Text: select and copy text from the image, click links, phone numbers and addresses; Visual Look Up with `⌘L`.
 - Share with `⌘S`: AirDrop, Messages, Add to Photos and other macOS services.
-- Optional: `⌘⌫` moves the image to the Trash through Finder (undo with `⌘Z`).
+- Labels with one key: `1`–`7` add or remove a Finder color tag on the image on screen — quick culling without importing anything. The image's labels show as dots in the corner.
+- Optional: `⌘⌫` moves the image to the Trash through Finder. `⌘Z` undoes the last label or deletion.
 - Neighbouring images are preloaded, so browsing is instant.
 
 ## Requirements
@@ -42,7 +43,9 @@ To uninstall: quit Ementium (menu bar icon or settings), delete it from Applicat
 | `Esc`, `Space` | Close |
 | `+` / `-` / `0` (with or without `⌘`) | Zoom in / out / fit |
 | Hold `⌥` | Photo info |
-| `⌘⌫` / `⌘Z` | Move to Trash / undo (if enabled) |
+| `1`–`7` | Add or remove a color label (red, orange, yellow, green, blue, purple, gray) |
+| `⌘Z` | Undo the last label or deletion |
+| `⌘⌫` | Move to Trash (if enabled) |
 | `⌘→` / `⌘←` | Rotate the view clockwise / counterclockwise |
 | Hold `⌘` | Live Text: select text, click links and phone numbers |
 | `⌘C` | Copy the selected text, otherwise the file (as in Finder) |

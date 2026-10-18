@@ -24,8 +24,8 @@ nonisolated enum ViewerKeyAction: Equatable {
     case trash
     /// `⌘⌫`, а удаление выключено в настройках — подсказать, где включить (иначе клавиша «мёртвая»).
     case trashOff
-    /// `⌘Z` — вернуть удалённое в этом сеансе.
-    case undoTrash
+    /// `⌘Z` — отменить последнее действие сеанса над файлами (`SessionUndo`): удаление, метку.
+    case undo
     /// `Home` / `End`: первая / последняя картинка в окне Finder.
     case edge(first: Bool)
     /// `⌘→` / `⌘←`: повернуть показ.
@@ -36,6 +36,8 @@ nonisolated enum ViewerKeyAction: Equatable {
     case openInApp
     /// `⌘L` — «Поиск по изображению».
     case lookUp
+    /// `1`–`7` — переключить метку на показанном файле.
+    case tag(Int)
     /// `⌘S` — «Поделиться».
     case share
 }
@@ -87,7 +89,8 @@ nonisolated enum InterceptionPolicy {
     /// Список — сочетания из настроек пользователя (`SystemShortcuts`) и несколько неназначаемых.
     static func followingAction(
         keyCode: UInt16, characters: String?, flags: CGEventFlags, isRepeat: Bool,
-        systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true, trashEnabled: Bool = false
+        systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true, trashEnabled: Bool = false,
+        tagsEnabled: Bool = false
     ) -> ViewerKeyAction {
         let modifiers = flags.intersection(SystemShortcuts.modifierMask)
         if let fixed = fixedSystemShortcut(keyCode: keyCode, modifiers: modifiers) {
@@ -120,14 +123,15 @@ nonisolated enum InterceptionPolicy {
             return .close
         case .openSettings?:
             return .openSettings
-        // Без настройки ⌘⌫ и ⌘Z до Finder не доходят: за оверлеем он не должен ничего удалять невидимо. На ⌘⌫ —
-        // подсказка, где включить. Автоповтор — никогда: зажатый ⌘⌫ удалял бы папку по картинке, зажатый ⌘Z —
-        // возвращал бы всё подряд.
+        // Без настройки ⌘⌫ до Finder не доходит: за оверлеем он не должен ничего удалять невидимо — подсказка, где
+        // включить. ⌘Z разбирает сам просмотр: Finder получает его от моста, только если последнее действие сеанса —
+        // удаление (а оно бывает лишь с настройкой); само нажатие до Finder не доходит. Автоповтор — никогда: зажатый ⌘⌫ удалял бы папку по картинке, зажатый
+        // ⌘Z — возвращал бы всё подряд.
         case .trash?:
             if isRepeat { return .swallow }
             return trashEnabled ? .trash : .trashOff
         case .undo?:
-            return trashEnabled && !isRepeat ? .undoTrash : .swallow
+            return isRepeat ? .swallow : .undo
         case .first?:
             return .edge(first: true)
         case .last?:
@@ -145,6 +149,9 @@ nonisolated enum InterceptionPolicy {
             return isRepeat ? .swallow : .lookUp
         case .share?:
             return isRepeat ? .swallow : .share
+        // Метки выключены — цифры глотаются, как раньше: до поиска Finder по первой букве они не доходят.
+        case let .tag(number)?:
+            return tagsEnabled && !isRepeat ? .tag(number) : .swallow
         case .quit?:
             return .quit
         case let zoom? where [.zoomIn, .zoomOut, .zoomFit].contains(zoom):

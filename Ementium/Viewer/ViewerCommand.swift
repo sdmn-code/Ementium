@@ -28,6 +28,8 @@ nonisolated enum ViewerCommand: Equatable {
     case lookUp
     /// `⌘S` — «Поделиться».
     case share
+    /// `1`–`7` без модификаторов — переключить метку (цветной тег Finder в порядке его меню) на показанном файле.
+    case tag(Int)
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -52,6 +54,12 @@ nonisolated enum ViewerCommand: Equatable {
         static let qwertyO: UInt16 = 31
         static let home: UInt16 = 115       // и fn ←
         static let end: UInt16 = 119        // и fn →
+        /// Цифры 1–7: верхний ряд и цифровой блок. По физической клавише: во французской раскладке верхний ряд
+        /// без `⇧` даёт `&é"'(`, а `⇧` + цифры займёт перемещение в папки.
+        static let digits: [UInt16: Int] = [
+            18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7,
+            83: 1, 84: 2, 85: 3, 86: 4, 87: 5, 88: 6, 89: 7,
+        ]
     }
 
     /// Стрелки, Esc и Пробел распознаются по физическому коду — он одинаков во всех раскладках.
@@ -118,6 +126,7 @@ nonisolated enum ViewerCommand: Equatable {
         case (KeyCode.escape, []), (KeyCode.space, []): self = .close
         case (KeyCode.home, []): self = .first
         case (KeyCode.end, []): self = .last
+        case (let code, []) where KeyCode.digits[code] != nil: self = .tag(KeyCode.digits[code]!)
         default: return nil
         }
     }

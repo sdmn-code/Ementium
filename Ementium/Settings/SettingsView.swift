@@ -326,10 +326,11 @@ private struct PercentSlider: View {
 
 // MARK: - Управление
 
-/// Клавиатура, масштаб и удаление — поведение просмотра.
+/// Клавиатура, масштаб, метки и удаление — поведение просмотра.
 struct ControlsPane: View {
     @AppStorage(Preferences.Key.spaceClosesViewer) private var spaceClosesViewer = true
     @AppStorage(Preferences.Key.rememberZoomPerImage) private var rememberZoomPerImage = true
+    @AppStorage(Preferences.Key.tagsWithDigits) private var tagsEnabled = true
     @AppStorage(Preferences.Key.trashWithCommandDelete) private var trashEnabled = false
 
     var body: some View {
@@ -343,7 +344,17 @@ struct ControlsPane: View {
                     Text("Kept until the viewer closes.")
                 }
             }
-            // Единственная настройка, которая меняет файлы вне приложения, — отдельно, с описанием, что произойдёт.
+            // Метки и удаление меняют файлы вне приложения — с описанием, что произойдёт.
+            Section("Labels") {
+                Toggle("Label with keys 1–7", isOn: $tagsEnabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    TagSwatches(enabled: tagsEnabled)
+                    Text("Keys are the colors from left to right. The label goes on the image on screen, pressing the key again removes it, and ⌘Z puts back what was there.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Section {
                 Toggle(isOn: $trashEnabled) {
                     Text("Move to Trash with ⌘⌫")
@@ -357,6 +368,47 @@ struct ControlsPane: View {
             }
         }
         .settingsForm()
+    }
+}
+
+/// Цвета меток — как в контекстном меню Finder, в порядке цифр 1–7. Только показывают: наведёшь курсор — кружок
+/// растёт и показывает свою цифру; щелчок ничего не делает. Метки выключены — бледные и на курсор не отвечают.
+struct TagSwatches: View {
+    let enabled: Bool
+    @State private var hovered: Int?
+    /// Имена — те же, что ставятся (на языке системы), для VoiceOver.
+    @State private var names: [String?] = Array(repeating: nil, count: 7)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(0..<7, id: \.self) { index in
+                let isHovered = enabled && hovered == index
+                ZStack {
+                    Circle().fill(Color(nsColor: FileTagger.menuOrderNSColors[index]))
+                    if isHovered {
+                        Text(verbatim: "\(index + 1)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .scaleEffect(isHovered && !reduceMotion ? 1.4 : 1)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovered)
+                .opacity(enabled ? 1 : 0.35)
+                .onHover { inside in
+                    guard enabled else { return }
+                    if inside { hovered = index } else if hovered == index { hovered = nil }
+                }
+                .accessibilityElement()
+                .accessibilityLabel(Text(verbatim: names[index].map { "\(index + 1) — \($0)" } ?? "\(index + 1)"))
+            }
+        }
+        .padding(.vertical, 4)
+        .onChange(of: enabled) { _, isEnabled in
+            if !isEnabled { hovered = nil }
+        }
+        .task { names = await FileTagger.colorTagNames() }
     }
 }
 
