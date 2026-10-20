@@ -31,7 +31,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         case closing
     }
 
-    private let panel: ViewerPanel
+    /// Пересоздаётся, если WindowServer «потерял» окно (`rebuildPanel`).
+    private var panel: ViewerPanel
+    /// Проверка после показа: панель действительно на экране.
+    private var panelCheck: Task<Void, Never>?
     private let viewerView = ViewerView(frame: .zero)
     private let interception: InterceptionState
     private var state = State.hidden
@@ -184,22 +187,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     init(state interception: InterceptionState) {
         self.interception = interception
-        panel = ViewerPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel = Self.makePanel()
         super.init()
 
         panel.contentView = viewerView
         panel.delegate = self
-        panel.appearance = NSAppearance(named: .darkAqua)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        // Выше строки меню и Dock.
-        panel.level = .screenSaver
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.isMovable = false
-        panel.animationBehavior = .none
 
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
         viewerView.swipeNeighbor = { [weak self] forward in self?.swipeNeighbor(forward: forward) ?? .none }
@@ -218,6 +210,22 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             self, selector: #selector(applicationDidActivate(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil
         )
+    }
+
+    private static func makePanel() -> ViewerPanel {
+        let panel = ViewerPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        // Выше строки меню и Dock.
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.isMovable = false
+        panel.animationBehavior = .none
+        return panel
     }
 
     /// Открывает просмотр, который листается вслед за выделением Finder.
@@ -414,6 +422,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             decodeSize = Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
             panel.alphaValue = 0
             panel.orderFrontRegardless()
+            if !panel.isOnActiveSpace { rebuildPanel(reason: "не на текущем рабочем столе") }
+            verifyPanelOnScreen()
         }
         // Из .closing продолжаем с текущей прозрачности, без мигания.
         state = .visible
@@ -464,6 +474,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         runLive(liveHold.reset())
         forgetLiveText()
         lookUpPending = false
+        panelCheck?.cancel()
+        panelCheck = nil
         sharePicker?.close()
         sharePicker = nil
         // Лист AirDrop — дочернее окно панели: со скрытием панели он только прячется и всплывает в следующем
@@ -1428,6 +1440,51 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             return (number, pid_t(pid), info[kCGWindowOwnerName as String] as? String ?? "?", layer)
         }
         return nil
+    }
+
+    /// Панель показана, но WindowServer не выводит её на экран: после двух суток работы окно выпало со всех рабочих
+    /// столов (причина не найдена — возможно, сон или полноэкранное приложение), и просмотр открывался невидимым.
+    /// При нулевой прозрачности и здоровая панель числится не на экране — поэтому проверяем, когда она проявилась.
+    /// Не на экране — пересоздать.
+    private func verifyPanelOnScreen() {
+        panelCheck?.cancel()
+        let number = panel.windowNumber
+        panelCheck = Task {
+            try? await Task.sleep(for: .seconds(fadeDuration + 0.3))
+            guard !Task.isCancelled, state == .visible, panel.windowNumber == number,
+                  !Self.onScreenWindowNumbers().contains(number) else { return }
+            rebuildPanel(reason: "WindowServer не выводит окно на экран")
+            // Сразу после вывода WindowServer окно ещё не числит на экране.
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, state == .visible else { return }
+            let shown = Self.onScreenWindowNumbers().contains(panel.windowNumber)
+            log.notice("Панель просмотра после пересоздания на экране: \(shown ? "да" : "нет", privacy: .public)")
+        }
+    }
+
+    /// Новое окно на место «потерянного» — с тем же видом, рамкой, уровнем и прозрачностью; было выведено —
+    /// выводится и новое.
+    private func rebuildPanel(reason: String) {
+        let old = panel
+        let wasShown = old.isVisible
+        log.notice("Панель просмотра: пересоздаю окно \(old.windowNumber, privacy: .public) — \(reason, privacy: .public)")
+        old.delegate = nil
+        old.orderOut(nil)
+        let fresh = Self.makePanel()
+        fresh.contentView = viewerView
+        fresh.delegate = self
+        fresh.setFrame(old.frame, display: false)
+        fresh.level = old.level
+        fresh.alphaValue = old.alphaValue
+        fresh.acceptsKeyboard = old.acceptsKeyboard
+        fresh.ignoresMouseEvents = old.ignoresMouseEvents
+        panel = fresh
+        guard wasShown else { return }
+        panel.orderFrontRegardless()
+        if state == .visible, mode == .ownList {
+            panel.makeKey()
+            panel.makeFirstResponder(viewerView)
+        }
     }
 
     /// Уровень панели — с причиной в журнале: панель опускается под меню «Поделиться», окна сервисов и просмотр
