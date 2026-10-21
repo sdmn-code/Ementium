@@ -27,7 +27,7 @@ The interface is in English and Russian (follows the system language). Detailed 
 
 ## Installation
 
-1. Download `Ementium-1.4.1.dmg` from [Releases](https://github.com/sdmn-code/Ementium/releases) and drag Ementium into Applications.
+1. Download `Ementium-1.5.dmg` from [Releases](https://github.com/sdmn-code/Ementium/releases) and drag Ementium into Applications.
 2. The app isn't notarized by Apple (no paid developer account yet), so macOS will refuse to open it the first time. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Ementium. Since macOS 15 the Control-click → Open shortcut no longer works for this.
 3. On first launch, Ementium explains why it needs permission and offers a button to grant it: turn Ementium on in **System Settings → Privacy & Security → Device Control and Data Access** (called Accessibility before macOS 27). It starts working by itself — no restart needed.
 
