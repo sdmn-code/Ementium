@@ -446,6 +446,10 @@ nonisolated final class FinderBridge: @unchecked Sendable {
             execute(navigation?.jump(keys, direction: direction, to: target) ?? [], timeoutSteps: keys.count)
         case .nothingAhead?:
             navigation?.stay()
+            // Чтение соседей отменено выше, а показ не сдвинулся. Ещё не прочитаны — сразу, без отсрочки: автоповтор
+            // зажатой стрелки приходит чаще `neighborDelay` и отменял бы отложенное раз за разом — соседи крайней
+            // картинки не читались, пока клавишу не отпустят (слайд-шоу не узнавало край и не шло через него).
+            if lastNeighbors?.shown != navigation?.shown { readNeighbors() }
         case nil:
             execute(navigation?.userStep(direction) ?? [])
         }

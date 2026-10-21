@@ -35,7 +35,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onAbsorb: { [weak self] urls in
             Task { @MainActor in self?.openFromFinder(urls) }
         },
-        onViewerKey: { [weak self, bridge] action in
+        onViewerKey: { [weak self, bridge, state] action in
+            // Слайд-шоу с зацикливанием: стрелка на краю окна Finder — прыжок через край, решает просмотр (он знает
+            // соседей). Поэтому в слайд-шоу шаг — через главный поток; задержка там не видна.
+            if case .step(let key) = action, state.snapshot.isSlideshow {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.viewer.dropSwipeLead()
+                        self.viewer.slideshowManualStep()
+                        if !self.viewer.slideshowArrowWraps(forward: key == .right || key == .down) { bridge.step(key) }
+                    }
+                }
+                return
+            }
             // Шаг — сразу в мост, без захода на главный поток: каждая миллисекунда видна при листании.
             if case .step(let key) = action {
                 // Раньше шага: его ответ моста не должен потеряться как «прежнее смахивание».

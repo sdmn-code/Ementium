@@ -102,8 +102,10 @@ final class ViewerView: NSView {
     private(set) var zoom: ZoomModel?
     private var isDragging = false
     /// Настройки, применённые при последнем открытии просмотра.
-    private var fitFraction: CGFloat = 1
+    private var settingsFitFraction: CGFloat = 1
     private var upscalesSmallImages = false
+    /// Доля экрана для «вписать»: из настроек, а в слайд-шоу — весь экран.
+    private var fitFraction: CGFloat { isSlideshow ? 1 : settingsFitFraction }
     private var spaceClosesViewer = true
     private var lastDragPoint: CGPoint = .zero
 
@@ -214,10 +216,16 @@ final class ViewerView: NSView {
     var isSwiping: Bool { swipe != nil || isSwipeAnimating }
 
     /// Режим слайд-шоу: точки меток прячутся, клавиши и жесты уходят контроллеру (`onSlideshowKey`).
+    /// Крупные картинки в слайд-шоу — на весь экран, после — снова доля из настроек (плавно).
     func setSlideshow(_ active: Bool) {
         guard active != isSlideshow else { return }
         isSlideshow = active
         updateTagDots(animated: !active)
+        if var current = zoom {
+            current.setFitOptions(fraction: fitFraction, upscalesSmallImages: upscalesSmallImages)
+            zoom = current
+            applyZoom(animated: true)
+        }
     }
 
     /// Значок по центру: ❚❚ — до снятия паузы, ▶ и ⏹ — секунду, затем гаснут.
@@ -370,7 +378,7 @@ final class ViewerView: NSView {
         layer?.backgroundColor = CGColor(
             srgbRed: color.red, green: color.green, blue: color.blue, alpha: preferences.dimming
         )
-        fitFraction = preferences.screenFraction
+        settingsFitFraction = preferences.screenFraction
         upscalesSmallImages = preferences.upscaleSmallImages
         spaceClosesViewer = preferences.spaceClosesViewer
         animatesInfo = preferences.animate

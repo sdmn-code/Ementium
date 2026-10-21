@@ -121,6 +121,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var slideshow = SlideshowClock(interval: .seconds(4))
     private var slideshowTimer: Task<Void, Never>?
     private var slideshowStallWatch: Task<Void, Never>?
+    /// Сколько шагов подряд край в режиме «следовать» не подтверждён мостом (см. `followEdgeNeighbors`).
+    private var slideshowEdgeWaits = 0
     /// Сколько ждать картинку после шага в режиме «следовать» (не считая декодирования), прежде чем шагнуть заново.
     private static let slideshowStallTime = Duration.seconds(4)
     private var slideshowActivity: NSObjectProtocol?
@@ -575,7 +577,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         switch command {
         case .next, .previous:
             crossfadeNext = false
-            let moved = navigate(by: command == .next ? 1 : -1)
+            let moved = navigateWrapping(forward: command == .next)
             slideshowManualStep(imagePending: moved && isDecoding)
         case .close:
             if closeLiveWindows() { return }
@@ -989,6 +991,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         viewerView.show(image, placement: slideshow.isActive ? .fit : zoomMemory.placement(for: url), crossfade: crossfade)
         displayedURL = url
         showTagDots(for: url)
+        slideshowEdgeWaits = 0
         runSlideshow(slideshow.imageShown())
     }
 
@@ -1646,7 +1649,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         case .ownList:
             guard let directory, !isListPending else { return nil }
             let index = directory.index + (forward ? 1 : -1)
-            return directory.images.indices.contains(index) ? directory.images[index] : nil
+            if directory.images.indices.contains(index) { return directory.images[index] }
+            // Слайд-шоу с зацикливанием: за последней — первая, перед первой — последняя.
+            guard slideshowWraps, directory.images.count > 1 else { return nil }
+            return forward ? directory.images.first : directory.images.last
         case .following:
             guard let followNeighbors, followNeighbors.around == followedURL else { return nil }
             return forward ? followNeighbors.neighbors.next : followNeighbors.neighbors.previous
@@ -1654,7 +1660,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     private func swipeNeighbor(forward: Bool) -> ViewerView.SwipeNeighbor {
-        guard state == .visible, let url = neighborURL(forward: forward) else { return .none }
+        guard state == .visible else { return .none }
+        // Слайд-шоу с зацикливанием, край окна Finder: соседа за краем мы не знаем — въезжает пустой фон, картинку
+        // покажет ответ моста.
+        guard let url = neighborURL(forward: forward) else { return canWrapFollowing(forward: forward) ? .pending : .none }
         return cache.image(for: url).map { .image($0) } ?? .pending
     }
 
@@ -1664,8 +1673,11 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         guard state == .visible else { return false }
         switch mode {
         case .ownList:
-            return navigate(by: forward ? 1 : -1)
+            return navigateWrapping(forward: forward)
         case .following:
+            if neighborURL(forward: forward) == nil, canWrapFollowing(forward: forward) {
+                return onFollowEdge?(forward) == true
+            }
             guard let url = neighborURL(forward: forward), let current = followedURL,
                   let known = followNeighbors?.neighbors,
                   // Finder выделит её же; показываем сразу, не дожидаясь его ответа.
@@ -1761,6 +1773,39 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             watchSlideshowStall()
             return true
         }
+    }
+
+    /// Слайд-шоу с зацикливанием: ручное листание тоже переходит с последней на первую и обратно.
+    private var slideshowWraps: Bool { slideshow.isActive && preferences.slideshowLoops }
+
+    /// Свой список: шаг вперёд или назад, в слайд-шоу с зацикливанием — через край. `true` — перешли.
+    private func navigateWrapping(forward: Bool) -> Bool {
+        if slideshowWraps, !isListPending, let directory, directory.images.count > 1,
+           directory.index == (forward ? directory.images.count - 1 : 0),
+           self.directory?.moveToEdge(first: forward) == true {
+            travelsBackward = !forward
+            loadCurrent()
+            return true
+        }
+        return navigate(by: forward ? 1 : -1)
+    }
+
+    /// Режим «следовать»: показанная — крайняя в окне Finder (в эту сторону картинок нет, в другую есть), и слайд-шоу
+    /// с зацикливанием — шаг через край пойдёт прыжком к первой (последней).
+    /// Соседи — прочитанные мостом для показанной, а нет их — известные для неё (ручное нажатие на краю не должно
+    /// упираться в неответивший мост).
+    private func canWrapFollowing(forward: Bool) -> Bool {
+        guard mode == .following, slideshowWraps,
+              let known = confirmedFollowNeighbors
+                ?? followNeighbors.flatMap({ $0.around == followedURL ? $0.neighbors : nil }) else { return false }
+        return forward ? known.next == nil && known.previous != nil : known.previous == nil && known.next != nil
+    }
+
+    /// Стрелка в режиме «следовать» во время слайд-шоу: на краю с зацикливанием — прыжок через край вместо стрелки
+    /// Finder (`true` — ушло прыжком). `forward` — `→` или `↓`.
+    func slideshowArrowWraps(forward: Bool) -> Bool {
+        guard state == .visible, canWrapFollowing(forward: forward) else { return false }
+        return onFollowEdge?(forward) == true
     }
 
     /// Соседи показанной, прочитанные мостом для неё (а не сдвинутые после смахивания — те с каждым шагом короче, и
@@ -1861,14 +1906,44 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             loadCurrent()
             return .moved
         case .following:
-            guard let known = followNeighbors, known.around == followedURL else { return .unknown }
+            guard let known = followNeighbors, known.around == followedURL else {
+                _ = waitForFollowNeighbors(reason: "соседи показанной не прочитаны")
+                return .unknown
+            }
             if known.neighbors.next != nil { return swiped(forward: true) ? .moved : .unknown }
-            // Край — только по соседям, прочитанным мостом для этой картинки.
-            guard let confirmed = confirmedFollowNeighbors else { return .unknown }
+            guard let edge = followEdgeNeighbors(known.neighbors) else { return .unknown }
             guard loops else { return .end }
-            guard confirmed.previous != nil else { return .alone }
+            guard edge.previous != nil else { return .alone }
             return onFollowEdge?(true) == true ? .moved : .unknown
         }
+    }
+
+    /// Край окна Finder для автоматического шага: соседи, прочитанные мостом для показанной. Мост их не прислал (Finder
+    /// ещё занят после стрелок) — попросить перечитать; не прислал и за `slideshowEdgeWaitLimit` повторов (~3 с) —
+    /// довериться известным: иначе слайд-шоу стояло бы на последней картинке вечно.
+    private func followEdgeNeighbors(_ known: PrefetchWindow.Neighbors) -> PrefetchWindow.Neighbors? {
+        if let confirmed = confirmedFollowNeighbors {
+            slideshowEdgeWaits = 0
+            return confirmed
+        }
+        guard waitForFollowNeighbors(reason: "край не подтверждён мостом") else { return nil }
+        log.notice("Слайд-шоу: мост не подтвердил край — шаг по известным соседям")
+        return known
+    }
+
+    private static let slideshowEdgeWaitLimit = 6
+
+    /// Соседей ждём — в первый раз просим мост перечитать их. `true` — ждали `slideshowEdgeWaitLimit` повторов (~3 с),
+    /// хватит.
+    private func waitForFollowNeighbors(reason: String) -> Bool {
+        slideshowEdgeWaits += 1
+        if slideshowEdgeWaits == 1 {
+            log.notice("Слайд-шоу: \(reason, privacy: .public) — перечитываю соседей")
+            onFollowResync?()
+        }
+        guard slideshowEdgeWaits >= Self.slideshowEdgeWaitLimit else { return false }
+        slideshowEdgeWaits = 0
+        return true
     }
 
     /// Пока слайд-шоу идёт, дисплей не засыпает; на паузе и после — как обычно.
