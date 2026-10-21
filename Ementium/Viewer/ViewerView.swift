@@ -38,6 +38,8 @@ final class ViewerView: NSView {
     var swipeNeighbor: ((_ forward: Bool) -> SwipeNeighbor)?
     /// Смахивание довели до конца — контроллер листает. `false` — не перелистнул.
     var onSwipe: ((_ forward: Bool) -> Bool)?
+    /// Слайд-шоу: клавиши и жесты — контроллеру, сами ничего не делают (масштаб, сведения, метки не работают).
+    var onSlideshowKey: ((SlideshowKey) -> Void)?
 
     private let imageLayer = CALayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
@@ -76,6 +78,15 @@ final class ViewerView: NSView {
     private var tagColors: [NSColor] = []
     /// Зажата стрелка — точки спрятаны до остановки.
     private var tagDotsHeld = false
+    /// Идёт слайд-шоу: точки меток спрятаны, масштаб не работает.
+    private(set) var isSlideshow = false
+    /// Значок слайд-шоу по центру экрана: ❚❚ висит, пока пауза; ▶ и ⏹ гаснут через секунду.
+    private let slideshowIndicator = NSVisualEffectView()
+    private let slideshowSymbol = NSImageView()
+    private var slideshowIndicatorHide: Task<Void, Never>?
+    /// Растворение при смене кадра слайд-шоу: прежняя картинка гаснет в этом слое.
+    private var crossfadeGhost: CALayer?
+    static let crossfadeDuration: CFTimeInterval = 0.6
     /// Live Text: оверлей VisionKit ровно на картинке — масштабируется и сдвигается с ней, `contentsRect` — вся
     /// его площадь, поворот задаёт анализ. Так рамки текста совпадают при любом масштабе и повороте; оверлей на весь
     /// экран при увеличении съезжает (прототип `LiveTextProbe`).
@@ -168,6 +179,117 @@ final class ViewerView: NSView {
 
         setUpInfoPanel()
         setUpTagDots()
+        setUpSlideshowIndicator()
+    }
+
+    private func setUpSlideshowIndicator() {
+        slideshowIndicator.material = .hudWindow
+        slideshowIndicator.blendingMode = .withinWindow
+        slideshowIndicator.state = .active
+        slideshowIndicator.wantsLayer = true
+        slideshowIndicator.layer?.cornerRadius = 32
+        slideshowIndicator.layer?.masksToBounds = true
+        slideshowIndicator.alphaValue = 0
+        slideshowIndicator.setAccessibilityElement(false)
+        slideshowIndicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(slideshowIndicator)
+        slideshowSymbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 96, weight: .semibold)
+        slideshowSymbol.contentTintColor = .white
+        slideshowSymbol.translatesAutoresizingMaskIntoConstraints = false
+        slideshowIndicator.addSubview(slideshowSymbol)
+        NSLayoutConstraint.activate([
+            slideshowIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
+            slideshowIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            slideshowIndicator.widthAnchor.constraint(equalToConstant: 150),
+            slideshowIndicator.heightAnchor.constraint(equalToConstant: 150),
+            slideshowSymbol.centerXAnchor.constraint(equalTo: slideshowIndicator.centerXAnchor),
+            slideshowSymbol.centerYAnchor.constraint(equalTo: slideshowIndicator.centerYAnchor),
+        ])
+    }
+
+    // MARK: - Слайд-шоу
+
+    /// Идёт смахивание (пальцы на трекпаде или доезжает анимация) — шаг слайд-шоу подождёт: иначе он листал бы под
+    /// пальцами, а смахивание — ещё раз.
+    var isSwiping: Bool { swipe != nil || isSwipeAnimating }
+
+    /// Режим слайд-шоу: точки меток прячутся, клавиши и жесты уходят контроллеру (`onSlideshowKey`).
+    func setSlideshow(_ active: Bool) {
+        guard active != isSlideshow else { return }
+        isSlideshow = active
+        updateTagDots(animated: !active)
+    }
+
+    /// Значок по центру: ❚❚ — до снятия паузы, ▶ и ⏹ — секунду, затем гаснут.
+    func showSlideshowIndicator(_ indicator: SlideshowClock.Indicator) {
+        slideshowIndicatorHide?.cancel()
+        slideshowIndicatorHide = nil
+        let symbol: String
+        switch indicator {
+        case .hidden:
+            slideshowIndicator.alphaValue = 0
+            slideshowIndicator.setAccessibilityElement(false)
+            return
+        case .pause: symbol = "pause.fill"
+        case .play: symbol = "play.fill"
+        case .stop: symbol = "stop.fill"
+        }
+        slideshowSymbol.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        slideshowIndicator.alphaValue = 1
+        slideshowIndicator.setAccessibilityElement(indicator == .pause)
+        slideshowIndicator.setAccessibilityLabel(indicator == .pause ? String(localized: "Slideshow paused") : nil)
+        guard indicator != .pause else { return }
+        slideshowIndicatorHide = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                slideshowIndicator.animator().alphaValue = 0
+            }, completionHandler: nil)
+        }
+    }
+
+    /// Растворение: прежняя картинка гаснет в отдельном слое, новая проявляется. Не `CATransition` на самом
+    /// слое: у новой картинки другая рамка, и снимок прежней растянулся бы в неё.
+    private func crossfade() {
+        crossfadeGhost?.removeFromSuperlayer()
+        crossfadeGhost = nil
+        let duration = Self.crossfadeDuration
+        if let previous = imageLayer.contents {
+            let ghost = CALayer()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            ghost.contents = previous
+            ghost.contentsGravity = imageLayer.contentsGravity
+            ghost.minificationFilter = .trilinear
+            ghost.bounds = imageLayer.bounds
+            ghost.position = imageLayer.position
+            ghost.transform = imageLayer.transform
+            ghost.opacity = 0
+            layer?.insertSublayer(ghost, below: imageLayer)
+            CATransaction.commit()
+            // Прежняя гаснет только во второй половине: новая проявляется поверх неё, и в середине они смешаны
+            // поровну. Гасни обе одновременно — сквозь полупрозрачные картинки просвечивал бы фон, кадр темнел бы.
+            let fadeOut = CAKeyframeAnimation(keyPath: "opacity")
+            fadeOut.values = [1, 1, 0]
+            fadeOut.keyTimes = [0, 0.5, 1]
+            fadeOut.duration = duration
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self, weak ghost] in
+                MainActor.assumeIsolated {
+                    ghost?.removeFromSuperlayer()
+                    if self?.crossfadeGhost === ghost { self?.crossfadeGhost = nil }
+                }
+            }
+            ghost.add(fadeOut, forKey: "slideshowFade")
+            CATransaction.commit()
+            crossfadeGhost = ghost
+        }
+        let fadeIn = CABasicAnimation(keyPath: "opacity")
+        fadeIn.fromValue = 0
+        fadeIn.toValue = 1
+        fadeIn.duration = duration
+        imageLayer.add(fadeIn, forKey: "slideshowFade")
     }
 
     private func setUpInfoPanel() {
@@ -264,8 +386,9 @@ final class ViewerView: NSView {
         }
     }
 
-    /// Новая картинка: во «вписать» или с запомненными масштабом и местом этой картинки.
-    func show(_ loaded: DecodedImage, placement: ZoomPlacement) {
+    /// Новая картинка: во «вписать» или с запомненными масштабом и местом этой картинки. `crossfade` — смена кадра
+    /// слайд-шоу: растворение прежней в новой.
+    func show(_ loaded: DecodedImage, placement: ZoomPlacement, crossfade: Bool = false) {
         let size = loaded.isVector ? Self.vectorSize(loaded.pointSize, in: bounds.size) : loaded.pointSize
         var next: ZoomModel
         if let current = zoom {
@@ -282,6 +405,14 @@ final class ViewerView: NSView {
         }
         zoom = next
         shownCount += 1
+        if crossfade {
+            self.crossfade()
+        } else {
+            // Ручной шаг сразу после смены кадра: растворение прежней не должно тянуться за новой.
+            crossfadeGhost?.removeFromSuperlayer()
+            crossfadeGhost = nil
+            imageLayer.removeAnimation(forKey: "slideshowFade")
+        }
         // `IOSurface` из сервиса декодирования — слой показывает его напрямую, без копирования.
         imageLayer.contents = loaded.surface
         messageLabel.isHidden = true
@@ -306,6 +437,9 @@ final class ViewerView: NSView {
     }
 
     func clear() {
+        showSlideshowIndicator(.hidden)
+        crossfadeGhost?.removeFromSuperlayer()
+        crossfadeGhost = nil
         setLiveMode(false)
         setLiveAnalysis(nil)
         resetSwipe()
@@ -422,12 +556,14 @@ final class ViewerView: NSView {
 
     /// Жесты из перехвата (режим «следовать за Finder»): точка — в координатах экрана.
     func magnify(by magnification: CGFloat, atScreenPoint screenPoint: CGPoint) {
+        if isSlideshow { return onSlideshowKey?(.blocked) ?? () }
         guard var current = zoom else { return }
         current.magnify(by: magnification, around: point(fromScreen: screenPoint))
         commit(current, animated: false)
     }
 
     func smartMagnify(atScreenPoint screenPoint: CGPoint) {
+        if isSlideshow { return onSlideshowKey?(.blocked) ?? () }
         guard var current = zoom else { return }
         current.toggleSmartZoom(at: point(fromScreen: screenPoint))
         commit(current, animated: true)
@@ -440,6 +576,7 @@ final class ViewerView: NSView {
 
     /// Сведение и разведение двух пальцев — плавно, в точке между пальцами.
     override func magnify(with event: NSEvent) {
+        if isSlideshow { return onSlideshowKey?(.blocked) ?? () }
         guard var current = zoom else { return }
         current.magnify(by: event.magnification, around: point(of: event))
         commit(current, animated: false)
@@ -447,6 +584,7 @@ final class ViewerView: NSView {
 
     /// Двойное касание двумя пальцами — «вписать» ↔ 100 %.
     override func smartMagnify(with event: NSEvent) {
+        if isSlideshow { return onSlideshowKey?(.blocked) ?? () }
         guard var current = zoom else { return }
         current.toggleSmartZoom(at: point(of: event))
         commit(current, animated: true)
@@ -623,6 +761,7 @@ final class ViewerView: NSView {
         // Вне режима Live Text до картинки доходит щелчок сквозь оверлей — он снимает выделение текста.
         if !isLiveMode { liveOverlay.resetSelection() }
         if event.clickCount == 2 {
+            if isSlideshow { return onSlideshowKey?(.blocked) ?? () }
             guard var current = zoom else { return }
             current.toggleSmartZoom(at: point(of: event))
             commit(current, animated: true)
@@ -930,7 +1069,7 @@ final class ViewerView: NSView {
 
     /// Видны, только если меток есть, стрелка не зажата и не открыта карточка сведений (в ней строка «Метки»).
     private func updateTagDots(animated: Bool) {
-        let visible: CGFloat = !tagColors.isEmpty && !tagDotsHeld && !isInfoShown ? 1 : 0
+        let visible: CGFloat = !tagColors.isEmpty && !tagDotsHeld && !isInfoShown && !isSlideshow ? 1 : 0
         guard tagDots.alphaValue != visible else { return }
         // Прятать — всегда сразу: неверные точки не должны висеть ни кадра.
         guard animated, visible == 1, animatesInfo else {
@@ -948,12 +1087,17 @@ final class ViewerView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        if isSlideshow {
+            onSlideshowKey?(slideshowKey(event))
+            return
+        }
         onKeyPressed?((123...126).contains(event.keyCode))
         if event.isARepeat, (123...126).contains(event.keyCode) { onArrowHeld?() }
         guard let command = ViewerCommand(event: event) else { return }
         // Автоповтор зажатого Пробела после закрытия ушёл бы в следующее окно, зажатая цифра щёлкала бы меткой.
         if command == .close, event.isARepeat { return }
         if case .tag = command, event.isARepeat { return }
+        if command == .slideshow, event.isARepeat { return }
         // Пробел закрывает, только если это включено в настройках; Esc закрывает всегда.
         if command == .close, event.keyCode == 49, !spaceClosesViewer { return }
         handle(command)
@@ -964,6 +1108,10 @@ final class ViewerView: NSView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command) else {
             return super.performKeyEquivalent(with: event)
+        }
+        if isSlideshow {
+            onSlideshowKey?(slideshowKey(event))
+            return true
         }
         // Сочетание с `⌘` — не удержание `⌘` для Live Text (и не `⌥` для сведений).
         onKeyPressed?(false)
@@ -983,6 +1131,14 @@ final class ViewerView: NSView {
         default:
             onCommand?(command)
         }
+    }
+
+    private func slideshowKey(_ event: NSEvent) -> SlideshowKey {
+        SlideshowKey.resolve(
+            ViewerCommand(event: event), keyCode: event.keyCode,
+            hasModifiers: !event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+            isRepeat: event.isARepeat
+        )
     }
 }
 

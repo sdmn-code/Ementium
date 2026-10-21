@@ -40,7 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if case .step(let key) = action {
                 // Раньше шага: его ответ моста не должен потеряться как «прежнее смахивание».
                 DispatchQueue.main.async {
-                    MainActor.assumeIsolated { self?.viewer.dropSwipeLead() }
+                    MainActor.assumeIsolated {
+                        self?.viewer.dropSwipeLead()
+                        // Ручной шаг в слайд-шоу: отсчёт — заново, когда появится новая картинка.
+                        self?.viewer.slideshowManualStep()
+                    }
                 }
                 bridge.step(key)
             } else {
@@ -107,6 +111,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bridge.undoTrash()
         }
         viewer.onFollowResync = { [weak self] in self?.bridge.rereadNeighbors() }
+        viewer.onFollowEdge = { [weak self] first in
+            // Как Home/End: дальше ведёт Finder, ответ моста не должен потеряться как «прежнее смахивание».
+            guard let self, self.state.snapshot.isFinderFrontmost else { return false }
+            viewer.dropSwipeLead()
+            bridge.jumpToEdge(first: first)
+            return true
+        }
         viewer.onFollowSelect = { [weak self] url in
             // Как и для стрелок с клавиатуры: только пока Finder активен.
             guard let self, self.state.snapshot.isFinderFrontmost else { return false }
@@ -248,6 +259,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             viewer.share()
         case .tag(let number):
             viewer.toggleTag(number)
+        case .slideshow:
+            viewer.toggleSlideshow()
+        case .slideshowPause:
+            viewer.slideshowPause()
+        case .slideshowBlocked:
+            viewer.slideshowBlocked()
         case .step, .pass, .swallow:
             break
         }

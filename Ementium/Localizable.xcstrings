@@ -1,6 +1,16 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%@ s": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ с"
+          }
+        }
+      }
+    },
     "1. macOS will show a request.": {
       "localizations": {
         "ru": {
@@ -351,16 +361,6 @@
         }
       }
     },
-    "Hold ⌘ in the viewer to select text and look up objects.": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Удерживайте ⌘ в просмотре, чтобы выделить текст или найти объект."
-          }
-        }
-      }
-    },
     "Hold ⌥ in the viewer to show it.": {
       "localizations": {
         "ru": {
@@ -461,26 +461,6 @@
         }
       }
     },
-    "Live Text": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Live Text"
-          }
-        }
-      }
-    },
-    "Live Text is off — turn it on in Settings": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Live Text выключен — включите в настройках"
-          }
-        }
-      }
-    },
     "Look Up found nothing": {
       "localizations": {
         "ru": {
@@ -537,6 +517,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Нет прав на удаление — удалите в Finder"
+          }
+        }
+      }
+    },
+    "Not available in slideshow — press S to exit": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В слайд-шоу не работает — S для выхода"
           }
         }
       }
@@ -641,22 +631,22 @@
         }
       }
     },
+    "Press S in the viewer to start or stop the slideshow.": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Клавиша S в просмотре запускает и останавливает слайд-шоу."
+          }
+        }
+      }
+    },
     "Quit Ementium": {
       "localizations": {
         "ru": {
           "stringUnit": {
             "state": "translated",
             "value": "Завершить Ementium"
-          }
-        }
-      }
-    },
-    "Recognize text and objects": {
-      "localizations": {
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Распознавать текст и объекты"
           }
         }
       }
@@ -751,6 +741,46 @@
         }
       }
     },
+    "Slideshow": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слайд-шоу"
+          }
+        }
+      }
+    },
+    "Slideshow finished": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слайд-шоу закончено"
+          }
+        }
+      }
+    },
+    "Slideshow interval": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Интервал слайд-шоу"
+          }
+        }
+      }
+    },
+    "Slideshow paused": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Слайд-шоу на паузе"
+          }
+        }
+      }
+    },
     "Source code on GitHub": {
       "localizations": {
         "ru": {
@@ -777,6 +807,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Пробел открывает картинки в Ementium"
+          }
+        }
+      }
+    },
+    "Start over after the last image": {
+      "localizations": {
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Начинать сначала после последнего"
           }
         }
       }

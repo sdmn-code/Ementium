@@ -18,6 +18,7 @@ The interface is in English and Russian (follows the system language). Detailed 
 - Share with `⌘S`: AirDrop, Messages, Add to Photos and other macOS services.
 - Labels with one key: `1`–`7` add or remove a Finder color tag on the image on screen — quick culling without importing anything. The image's labels show as dots in the corner.
 - Optional: `⌘⌫` moves the image to the Trash through Finder. `⌘Z` undoes the last label or deletion.
+- Slideshow with `S`: images change by themselves with a cross-dissolve, Space pauses. Interval (2–15 s) and looping are in Settings.
 - Neighbouring images are preloaded, so browsing is instant.
 
 ## Requirements
@@ -54,6 +55,9 @@ To uninstall: quit Ementium (menu bar icon or settings), delete it from Applicat
 | `⌘O` | Open in the default app |
 | `⌘,` | Settings |
 | `⌘Q` | Quit Ementium |
+| `S` | Start / stop the slideshow |
+
+During a slideshow only `S` or `Esc` (leave the slideshow), Space (pause), the arrow keys and swipes work; other keys show a hint.
 
 ## Privacy and security
 

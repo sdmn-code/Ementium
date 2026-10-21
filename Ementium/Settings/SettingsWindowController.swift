@@ -95,7 +95,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             }
             if model.loginItemNeedsApproval { height += 56 }
             return height
-        case .viewer: return 828
+        case .viewer: return 894
         case .controls: return 544
         case .about: return 295
         }

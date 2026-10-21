@@ -30,6 +30,8 @@ nonisolated enum ViewerCommand: Equatable {
     case share
     /// `1`–`7` без модификаторов — переключить метку (цветной тег Finder в порядке его меню) на показанном файле.
     case tag(Int)
+    /// `S` без модификаторов — включить или выключить слайд-шоу.
+    case slideshow
 
     private enum KeyCode {
         static let space: UInt16 = 49
@@ -127,6 +129,8 @@ nonisolated enum ViewerCommand: Equatable {
         case (KeyCode.home, []): self = .first
         case (KeyCode.end, []): self = .last
         case (let code, []) where KeyCode.digits[code] != nil: self = .tag(KeyCode.digits[code]!)
+        // По физической клавише, как цифры: в русской раскладке это «ы».
+        case (KeyCode.qwertyS, []): self = .slideshow
         default: return nil
         }
     }

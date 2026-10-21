@@ -23,6 +23,8 @@ nonisolated struct InterceptionSnapshot: Sendable, Equatable {
     var trashEnabled = false
     /// Метки клавишами 1–7.
     var tagsEnabled = false
+    /// Идёт слайд-шоу: работают только `S`, Пробел, стрелки и `Esc`.
+    var isSlideshow = false
 }
 
 /// Общий снимок для трёх потоков: главного, `FinderBridge` и `KeyInterceptor`.

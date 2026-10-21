@@ -132,7 +132,8 @@ struct ViewerPane: View {
     @AppStorage(Preferences.Key.upscaleSmallImages) private var upscaleSmallImages = false
     @AppStorage(Preferences.Key.animateViewer) private var animateViewer = true
     @AppStorage(Preferences.Key.infoPanelPosition) private var infoPosition = InfoPanelPosition.topRight.rawValue
-    @AppStorage(Preferences.Key.liveText) private var liveText = true
+    @AppStorage(Preferences.Key.slideshowInterval) private var slideshowInterval = 4
+    @AppStorage(Preferences.Key.slideshowLoops) private var slideshowLoops = false
 
     var body: some View {
         Form {
@@ -160,12 +161,12 @@ struct ViewerPane: View {
                     Text("Stretch them to the large image size; otherwise they open at actual size.")
                 }
             }
-            // Только распознавание: «Поделиться» по `⌘` работает и без него.
-            Section("Live Text") {
-                Toggle(isOn: $liveText) {
-                    Text("Recognize text and objects")
-                    Text("Hold ⌘ in the viewer to select text and look up objects.")
-                }
+            Section("Slideshow") {
+                SecondsSlider(
+                    title: "Slideshow interval", description: "Press S in the viewer to start or stop the slideshow.",
+                    value: $slideshowInterval, range: Preferences.slideshowIntervalRange
+                )
+                Toggle("Start over after the last image", isOn: $slideshowLoops)
             }
             Section {
                 Picker(selection: $infoPosition) {
@@ -315,6 +316,43 @@ private struct PercentSlider: View {
             }
             .labelsHidden()
             .accessibilityValue(Text(value, format: Self.percent))
+            if let description {
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Секунды целыми, с подписью значения справа — как `PercentSlider`.
+private struct SecondsSlider: View {
+    let title: LocalizedStringKey
+    var description: LocalizedStringKey?
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+
+    /// Строкой: в каталоге подпись — «%@ s».
+    private var seconds: String { String(value) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(seconds) s")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            Slider(
+                value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }),
+                in: Double(range.lowerBound)...Double(range.upperBound), step: 1
+            ) {
+                Text(title)
+            }
+            .labelsHidden()
+            .accessibilityValue(Text("\(seconds) s"))
             if let description {
                 Text(description)
                     .font(.subheadline)

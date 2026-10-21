@@ -40,6 +40,12 @@ nonisolated enum ViewerKeyAction: Equatable {
     case tag(Int)
     /// `⌘S` — «Поделиться».
     case share
+    /// `S` — включить или выключить слайд-шоу.
+    case slideshow
+    /// Пробел в слайд-шоу — пауза или продолжение.
+    case slideshowPause
+    /// В слайд-шоу работают только `S`, Пробел, стрелки и `Esc` — остальное наше поглощается с плашкой.
+    case slideshowBlocked
 }
 
 /// Жест трекпада при открытом просмотре. Жесты масштаба macOS отдаёт активному приложению — обычно Finder,
@@ -90,7 +96,7 @@ nonisolated enum InterceptionPolicy {
     static func followingAction(
         keyCode: UInt16, characters: String?, flags: CGEventFlags, isRepeat: Bool,
         systemShortcuts: [SystemShortcut], spaceClosesViewer: Bool = true, trashEnabled: Bool = false,
-        tagsEnabled: Bool = false
+        tagsEnabled: Bool = false, slideshow: Bool = false
     ) -> ViewerKeyAction {
         let modifiers = flags.intersection(SystemShortcuts.modifierMask)
         if let fixed = fixedSystemShortcut(keyCode: keyCode, modifiers: modifiers) {
@@ -114,7 +120,21 @@ nonisolated enum InterceptionPolicy {
             return .passAndClose
         }
         let nsModifiers = NSEvent.ModifierFlags(rawValue: UInt(modifiers.rawValue))
-        switch ViewerCommand(keyCode: keyCode, characters: characters, modifiers: nsModifiers) {
+        let command = ViewerCommand(keyCode: keyCode, characters: characters, modifiers: nsModifiers)
+        // Слайд-шоу: стрелки (выше), `S` и `Esc` (выйти из слайд-шоу — просмотр закроет следующий `Esc`), Пробел
+        // (пауза — что бы ни говорила настройка); системные сочетания — как всегда (выше). Прочие наши команды не
+        // работают — плашка; не наши клавиши — молча.
+        if slideshow {
+            if keyCode == KeyCode.space { return isRepeat ? .swallow : .slideshowPause }
+            switch command {
+            case .slideshow?, .close?: return isRepeat ? .swallow : .slideshow
+            case nil: return .swallow
+            default: return isRepeat ? .swallow : .slideshowBlocked
+            }
+        }
+        switch command {
+        case .slideshow?:
+            return isRepeat ? .swallow : .slideshow
         case .close?:
             // Автоповтор Пробела, которым открыли просмотр, не должен его тут же закрыть.
             if isRepeat { return .swallow }

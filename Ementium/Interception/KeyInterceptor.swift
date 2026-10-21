@@ -173,7 +173,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
         let action = InterceptionPolicy.followingAction(
             keyCode: keyCode, characters: characters(of: event), flags: event.flags, isRepeat: isRepeat,
             systemShortcuts: snapshot.systemShortcuts, spaceClosesViewer: snapshot.spaceClosesViewer,
-            trashEnabled: snapshot.trashEnabled, tagsEnabled: snapshot.tagsEnabled
+            trashEnabled: snapshot.trashEnabled, tagsEnabled: snapshot.tagsEnabled, slideshow: snapshot.isSlideshow
         )
         switch action {
         case .pass:
@@ -187,7 +187,7 @@ nonisolated final class KeyInterceptor: @unchecked Sendable {
             swallowed.swallow(keyCode)
             return nil
         case .step, .close, .quit, .zoom, .openSettings, .trash, .trashOff, .undo, .edge, .rotate, .copy, .openInApp,
-             .lookUp, .share, .tag:
+             .lookUp, .share, .tag, .slideshow, .slideshowPause, .slideshowBlocked:
             swallowed.swallow(keyCode)
             onViewerKey(action)
             return nil

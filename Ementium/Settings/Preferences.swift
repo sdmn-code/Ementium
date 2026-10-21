@@ -18,8 +18,10 @@ nonisolated enum Preferences {
         static let animateViewer = "animateViewer"
         /// `⌘⌫` в просмотре перемещает картинку в Корзину (режим «следовать»). По умолчанию выключено.
         static let trashWithCommandDelete = "trashWithCommandDelete"
-        /// Распознавать текст и объекты по удержанию `⌘` (Live Text, «Поиск по изображению»).
-        static let liveText = "liveTextEnabled"
+        /// Слайд-шоу: секунды на картинку (`slideshowIntervalRange`).
+        static let slideshowInterval = "slideshowInterval"
+        /// Слайд-шоу: после последней картинки — снова с первой.
+        static let slideshowLoops = "slideshowLoops"
         /// Метки клавишами 1–7 (цветные теги Finder на показанном файле) и точки меток в просмотре.
         static let tagsWithDigits = "tagsWithDigits"
         /// Угол карточки сведений о снимке (по `⌥`).
@@ -41,9 +43,12 @@ nonisolated enum Preferences {
         Key.animateViewer: true,
         Key.infoPanelPosition: InfoPanelPosition.topRight.rawValue,
         Key.trashWithCommandDelete: false,
-        Key.liveText: true,
+        Key.slideshowInterval: 4,
+        Key.slideshowLoops: false,
         Key.tagsWithDigits: true,
     ] }
+
+    static let slideshowIntervalRange = 2...15
 
     static func register(in store: UserDefaults = .standard) {
         store.register(defaults: defaults)
@@ -62,8 +67,10 @@ nonisolated struct ViewerPreferences: Equatable {
     var animate: Bool
     var infoPosition: InfoPanelPosition
     var trashEnabled: Bool
-    var liveText: Bool
     var tags: Bool
+    /// Секунды на картинку в слайд-шоу.
+    var slideshowInterval: Int
+    var slideshowLoops: Bool
 
     init(from store: UserDefaults = .standard) {
         Preferences.register(in: store)
@@ -76,8 +83,10 @@ nonisolated struct ViewerPreferences: Equatable {
         animate = store.bool(forKey: Preferences.Key.animateViewer)
         infoPosition = store.string(forKey: Preferences.Key.infoPanelPosition).flatMap(InfoPanelPosition.init) ?? .topRight
         trashEnabled = store.bool(forKey: Preferences.Key.trashWithCommandDelete)
-        liveText = store.bool(forKey: Preferences.Key.liveText)
         tags = store.bool(forKey: Preferences.Key.tagsWithDigits)
+        let range = Preferences.slideshowIntervalRange
+        slideshowInterval = min(max(store.integer(forKey: Preferences.Key.slideshowInterval), range.lowerBound), range.upperBound)
+        slideshowLoops = store.bool(forKey: Preferences.Key.slideshowLoops)
     }
 }
 

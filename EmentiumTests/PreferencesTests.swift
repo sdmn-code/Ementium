@@ -28,6 +28,8 @@ final class PreferencesTests {
         #expect(viewer.spaceClosesViewer)
         #expect(viewer.animate)
         #expect(viewer.tags)  // метки клавишами 1–7 — включены
+        #expect(viewer.slideshowInterval == 4)
+        #expect(!viewer.slideshowLoops)
         #expect(store.bool(forKey: Preferences.Key.interceptionEnabled))
         #expect(store.bool(forKey: Preferences.Key.showMenuBarIcon))
     }
@@ -42,6 +44,19 @@ final class PreferencesTests {
         #expect(viewer.color == RGBColor(hex: "#336699"))
         #expect(viewer.screenFraction == 0.5)
         #expect(!viewer.spaceClosesViewer)
+    }
+
+    // Интервал слайд-шоу — 2–15 с, что бы ни лежало в настройках.
+    @Test func slideshowIntervalIsClamped() {
+        store.set(1, forKey: Preferences.Key.slideshowInterval)
+        #expect(ViewerPreferences(from: store).slideshowInterval == 2)
+        store.set(60, forKey: Preferences.Key.slideshowInterval)
+        #expect(ViewerPreferences(from: store).slideshowInterval == 15)
+        store.set(7, forKey: Preferences.Key.slideshowInterval)
+        store.set(true, forKey: Preferences.Key.slideshowLoops)
+        let viewer = ViewerPreferences(from: store)
+        #expect(viewer.slideshowInterval == 7)
+        #expect(viewer.slideshowLoops)
     }
 
     @Test func unknownInfoPositionFallsBackToTopRight() {

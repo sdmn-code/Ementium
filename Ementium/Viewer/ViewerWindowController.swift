@@ -117,6 +117,14 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     private var swallowsMouseUp = false
     /// Что вернуть по `⌘Z` — действия над файлами в этом сеансе просмотра.
     private var sessionUndo = SessionUndo()
+    /// Слайд-шоу (`S`): автомат, его таймер и запрет сна дисплея; следующая смена кадра — растворением.
+    private var slideshow = SlideshowClock(interval: .seconds(4))
+    private var slideshowTimer: Task<Void, Never>?
+    private var slideshowStallWatch: Task<Void, Never>?
+    /// Сколько ждать картинку после шага в режиме «следовать» (не считая декодирования), прежде чем шагнуть заново.
+    private static let slideshowStallTime = Duration.seconds(4)
+    private var slideshowActivity: NSObjectProtocol?
+    private var crossfadeNext = false
     /// Метки: имена цветных тегов на языке системы (порядок меню Finder) — определяются при открытии просмотра.
     private var tagNamesTask: Task<[String?], Never>?
     private var resolvedTagNames: [String?]?
@@ -173,6 +181,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     var onFollowSelect: ((URL) -> Bool)?
     /// Вернулись к выделению Finder — мосту прочитать соседей заново.
     var onFollowResync: (() -> Void)?
+    /// Слайд-шоу в режиме «следовать»: к первой картинке окна Finder (зацикливание, старт с последней). `false` —
+    /// не отправлено (Finder уже не активен).
+    var onFollowEdge: ((_ first: Bool) -> Bool)?
 
     /// `⌘,` в режиме «свой список» (в режиме «следовать» — через перехват): открыть настройки.
     var onOpenSettings: (() -> Void)?
@@ -195,7 +206,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
         viewerView.onCommand = { [weak self] command in self?.handle(command) }
         viewerView.swipeNeighbor = { [weak self] forward in self?.swipeNeighbor(forward: forward) ?? .none }
-        viewerView.onSwipe = { [weak self] forward in self?.swiped(forward: forward) ?? false }
+        viewerView.onSwipe = { [weak self] forward in self?.manualSwiped(forward: forward) ?? false }
+        viewerView.onSlideshowKey = { [weak self] key in self?.slideshowKey(key) }
         viewerView.onKeyPressed = { [weak self] isArrow in self?.input(.keyPressed(isArrow: isArrow)) }
         viewerView.onArrowHeld = { [weak self] in self?.input(.arrowHeld) }
         viewerView.onZoomChanged = { [weak self] zoom in self?.loadDetailIfNeeded(for: zoom) }
@@ -230,6 +242,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     /// Открывает просмотр, который листается вслед за выделением Finder.
     func showFollowing(_ url: URL) {
+        runSlideshow(slideshow.reset())
         resetLiveText()
         directoryTask?.cancel()
         isListPending = false
@@ -358,6 +371,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             return
         }
         if isFollowing { onFollowingEnded?() }
+        runSlideshow(slideshow.reset())
         resetLiveText()
         mode = .ownList
         followedURL = nil
@@ -417,6 +431,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
                 $0.tagsEnabled = preferences.tags
             }
             tagNamesTask = preferences.tags ? Task { await FileTagger.colorTagNames() } : nil
+            slideshow = SlideshowClock(interval: .seconds(preferences.slideshowInterval))
             guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
             panel.setFrame(screen.frame, display: false)
             decodeSize = Int(max(screen.frame.width, screen.frame.height) * screen.backingScaleFactor)
@@ -476,6 +491,7 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         lookUpPending = false
         panelCheck?.cancel()
         panelCheck = nil
+        runSlideshow(slideshow.reset())
         sharePicker?.close()
         sharePicker = nil
         // Лист AirDrop — дочернее окно панели: со скрытием панели он только прячется и всплывает в следующем
@@ -557,10 +573,10 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     private func handle(_ command: ViewerCommand) {
         switch command {
-        case .next:
-            navigate(by: 1)
-        case .previous:
-            navigate(by: -1)
+        case .next, .previous:
+            crossfadeNext = false
+            let moved = navigate(by: command == .next ? 1 : -1)
+            slideshowManualStep(imagePending: moved && isDecoding)
         case .close:
             if closeLiveWindows() { return }
             close(returnFocus: true)
@@ -593,6 +609,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
             share()
         case .tag(let number):
             toggleTag(number)
+        case .slideshow:
+            toggleSlideshow()
         }
     }
 
@@ -837,6 +855,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// Жест трекпада из перехвата (режим «следовать за Finder»): масштаб в точке под курсором.
     func gesture(_ gesture: ViewerGesture) {
         guard state == .visible else { return }
+        // В слайд-шоу масштаба нет.
+        if slideshow.isActive { return slideshowBlocked() }
         let location = NSEvent.mouseLocation
         switch gesture {
         case .magnify(let magnification):
@@ -961,10 +981,15 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         runLive(liveHold.reset())
         forgetLiveText()
         lookUpPending = false
-        rememberDisplayedZoom()
-        viewerView.show(image, placement: zoomMemory.placement(for: url))
+        // В слайд-шоу — всегда «вписать»: увеличение там не работает, а запомненное увело бы картинку из кадра. Запоминать
+        // «вписать» тоже нельзя — затёрло бы масштаб, который пользователь оставил картинке до слайд-шоу.
+        if !slideshow.isActive { rememberDisplayedZoom() }
+        let crossfade = crossfadeNext
+        crossfadeNext = false
+        viewerView.show(image, placement: slideshow.isActive ? .fit : zoomMemory.placement(for: url), crossfade: crossfade)
         displayedURL = url
         showTagDots(for: url)
+        runSlideshow(slideshow.imageShown())
     }
 
     // MARK: - Live Text, поиск по изображению, «Поделиться»
@@ -999,9 +1024,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Распознать показанное, если ещё не распознано (или с тех пор подгрузилась деталь, повернули). Анимацию —
-    /// нет; выключено в настройках — режим показывает только «Поделиться».
+    /// нет.
     private func analyzeLiveText() {
-        guard preferences.liveText, let current = loaded, !current.isAnimated, let zoom = viewerView.zoom else {
+        guard let current = loaded, !current.isAnimated, let zoom = viewerView.zoom else {
             finishLookUp()
             return
         }
@@ -1106,10 +1131,6 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
     /// кнопка поиска. Открыть поиск напрямую VisionKit не даёт.
     func lookUp() {
         guard state == .visible else { return }
-        guard preferences.liveText else {
-            viewerView.showMessage(String(localized: "Live Text is off — turn it on in Settings"))
-            return
-        }
         lookUpPending = true
         let outputs = liveHold.latch()
         runLive(outputs)
@@ -1511,7 +1532,8 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
 
     /// Модификаторы и нажатия: в режиме «свой список» — от панели, в режиме «следовать» — от перехвата.
     func input(_ input: ViewerInput) {
-        guard state == .visible else { return }
+        // В слайд-шоу сведения по `⌥` и Live Text по `⌘` не работают — молча: `⌘` нажимают перед любым сочетанием.
+        guard state == .visible, !slideshow.isActive else { return }
         switch input {
         case .modifiers(let modifiers):
             run(infoHold.modifiersChanged(modifiers))
@@ -1664,6 +1686,210 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Смахивание пальцами — ручной шаг: в слайд-шоу отсчёт заново.
+    private func manualSwiped(forward: Bool) -> Bool {
+        crossfadeNext = false
+        let moved = swiped(forward: forward)
+        if moved { slideshowManualStep(imagePending: isDecoding) }
+        return moved
+    }
+
+    // MARK: - Слайд-шоу
+
+    /// `S`: включить или выключить. Сведения, Live Text и увеличение в слайд-шоу не работают — начинаем с чистого
+    /// показа во «вписать». На последней картинке без зацикливания — с первой, иначе показ сразу бы и кончился.
+    func toggleSlideshow() {
+        guard state == .visible else { return }
+        guard !slideshow.isActive else { return runSlideshow(slideshow.toggle(imageOnScreen: true)) }
+        run(infoHold.reset())
+        runLive(liveHold.reset())
+        _ = closeLiveWindows()
+        // Увеличенную или повёрнутую — во «вписать» без поворота, как пойдут следующие; её масштаб запомнен.
+        if let image = loaded, let zoom = viewerView.zoom, !zoom.isFit || zoom.quarterTurns != 0 {
+            rememberDisplayedZoom()
+            viewerView.show(image, placement: .fit)
+        }
+        let jumped = !preferences.slideshowLoops && jumpToFirstFromLast()
+        // На экране — картинка или ошибка «не удалось открыть» (декодирование закончено): отсчёт сразу. Прыжок к первой
+        // в своём списке мог показать её синхронно (из кэша) — тоже. В «следовать» её покажет ответ моста.
+        let onScreen = !isDecoding && currentURL != nil && !(jumped && mode == .following)
+        runSlideshow(slideshow.toggle(imageOnScreen: onScreen))
+    }
+
+    /// Пробел в слайд-шоу.
+    func slideshowPause() {
+        guard state == .visible else { return }
+        runSlideshow(slideshow.pauseToggle())
+    }
+
+    /// Нажатие или жест, которые в слайд-шоу не работают.
+    func slideshowBlocked() {
+        guard state == .visible else { return }
+        runSlideshow(slideshow.blocked(at: Date()))
+    }
+
+    /// Стрелка (в режиме «следовать» — из перехвата) или смахивание: отсчёт заново, кадр — без растворения.
+    func slideshowManualStep(imagePending: Bool = false) {
+        guard state == .visible, slideshow.isActive else { return }
+        crossfadeNext = false
+        runSlideshow(slideshow.manualStep(imagePending: imagePending))
+        if imagePending { watchSlideshowStall() }
+    }
+
+    private func slideshowKey(_ key: SlideshowKey) {
+        switch key {
+        case .toggle: toggleSlideshow()
+        case .pause: slideshowPause()
+        case .navigate(let command): handle(command)
+        case .blocked: slideshowBlocked()
+        case .ignore: break
+        }
+    }
+
+    /// Стоим на последней картинке — к первой. `true` — перешли.
+    private func jumpToFirstFromLast() -> Bool {
+        switch mode {
+        case .ownList:
+            guard let directory, !isListPending, directory.images.count > 1,
+                  directory.index == directory.images.count - 1,
+                  self.directory?.moveToEdge(first: true) == true else { return false }
+            loadCurrent()
+            return true
+        case .following:
+            guard let known = confirmedFollowNeighbors, known.next == nil, known.previous != nil,
+                  onFollowEdge?(true) == true else { return false }
+            watchSlideshowStall()
+            return true
+        }
+    }
+
+    /// Соседи показанной, прочитанные мостом для неё (а не сдвинутые после смахивания — те с каждым шагом короче, и
+    /// «соседа нет» там значит лишь «ещё не прочитан»).
+    private var confirmedFollowNeighbors: PrefetchWindow.Neighbors? {
+        guard let followedURL, let followNeighbors, followNeighbors.around == followedURL,
+              finderNeighbors?.around == followedURL else { return nil }
+        return followNeighbors.neighbors
+    }
+
+    /// Режим «следовать»: шаг отдан мосту (прыжок к первой) или ручной шаг ждёт картинку. Мост не ответил, Finder
+    /// занят — без сторожа слайд-шоу ждало бы вечно; пока картинка декодируется, ждём её.
+    private func watchSlideshowStall() {
+        slideshowStallWatch?.cancel()
+        slideshowStallWatch = Task {
+            var waited = Duration.zero
+            while waited < Self.slideshowStallTime {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, state == .visible, slideshow.phase == .waiting else { return }
+                if !isDecoding { waited += .milliseconds(500) }
+            }
+            log.info("Слайд-шоу: картинка не появилась — шаг заново")
+            runSlideshow(slideshow.advanceFailed())
+        }
+    }
+
+    private func runSlideshow(_ outputs: [SlideshowClock.Output]) {
+        for output in outputs {
+            switch output {
+            case .startTimer(let delay):
+                slideshowTimer?.cancel()
+                slideshowTimer = Task {
+                    try? await Task.sleep(for: delay)
+                    guard !Task.isCancelled, state == .visible else { return }
+                    runSlideshow(slideshow.timerFired())
+                }
+            case .cancelTimer:
+                slideshowTimer?.cancel()
+                slideshowTimer = nil
+                if !slideshow.isActive {
+                    slideshowStallWatch?.cancel()
+                    slideshowStallWatch = nil
+                }
+            case .advance:
+                slideshowAdvance()
+            case .message(let message):
+                showMessage(Self.text(of: message))
+            case .indicator(let indicator):
+                viewerView.showSlideshowIndicator(indicator)
+            case .keepDisplayAwake(let awake):
+                keepDisplayAwake(awake)
+            case .active(let active):
+                log.info("Слайд-шоу \(active ? "включено" : "выключено", privacy: .public)")
+                interception.update { $0.isSlideshow = active }
+                viewerView.setSlideshow(active)
+                if !active { crossfadeNext = false }
+                // Курсор — до движения мыши; в режиме «следовать» сменить его нельзя (фоновое приложение).
+                if active, mode == .ownList { NSCursor.setHiddenUntilMouseMoves(true) }
+            }
+        }
+    }
+
+    private enum SlideStep {
+        case moved
+        /// Соседи ещё не известны или список строится — повторить.
+        case unknown
+        /// Картинка одна — отсчёт заново.
+        case alone
+        case end
+    }
+
+    /// Таймер истёк — следующая картинка, растворением (при «Уменьшить движение» — сразу).
+    private func slideshowAdvance() {
+        crossfadeNext = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if mode == .ownList { NSCursor.setHiddenUntilMouseMoves(true) }
+        // Пальцы на трекпаде или смахивание доезжает — подождать: иначе шаг под пальцами, а смахивание — ещё один.
+        let step = viewerView.isSwiping ? .unknown : nextSlide()
+        log.info("Слайд-шоу: шаг — \(String(describing: step), privacy: .public)")
+        if step != .moved { crossfadeNext = false }
+        switch step {
+        case .moved: if mode == .following { watchSlideshowStall() }
+        case .unknown: runSlideshow(slideshow.advanceFailed())
+        case .alone: runSlideshow(slideshow.imageShown())
+        case .end: runSlideshow(slideshow.reachedEnd())
+        }
+    }
+
+    /// Шаг вперёд по порядку списка или окна Finder. В режиме «следовать» — путём смахивания: соседа показываем
+    /// сразу и выделяем в Finder через AX (стрелки не годятся — в «Списке» `→` никуда не ведёт).
+    private func nextSlide() -> SlideStep {
+        let loops = preferences.slideshowLoops
+        switch mode {
+        case .ownList:
+            guard let directory, !isListPending else { return .unknown }
+            if directory.index + 1 < directory.images.count { return navigate(by: 1) ? .moved : .unknown }
+            guard loops else { return .end }
+            guard directory.images.count > 1, self.directory?.moveToEdge(first: true) == true else { return .alone }
+            loadCurrent()
+            return .moved
+        case .following:
+            guard let known = followNeighbors, known.around == followedURL else { return .unknown }
+            if known.neighbors.next != nil { return swiped(forward: true) ? .moved : .unknown }
+            // Край — только по соседям, прочитанным мостом для этой картинки.
+            guard let confirmed = confirmedFollowNeighbors else { return .unknown }
+            guard loops else { return .end }
+            guard confirmed.previous != nil else { return .alone }
+            return onFollowEdge?(true) == true ? .moved : .unknown
+        }
+    }
+
+    /// Пока слайд-шоу идёт, дисплей не засыпает; на паузе и после — как обычно.
+    private func keepDisplayAwake(_ awake: Bool) {
+        if awake, slideshowActivity == nil {
+            slideshowActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.idleDisplaySleepDisabled, .userInitiated], reason: "Slideshow"
+            )
+        } else if !awake, let activity = slideshowActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            slideshowActivity = nil
+        }
+    }
+
+    private static func text(of message: SlideshowClock.Message) -> String {
+        switch message {
+        case .finished: String(localized: "Slideshow finished")
+        case .blocked: String(localized: "Not available in slideshow — press S to exit")
+        }
+    }
+
     private func fail(_ url: URL, error: Error, keepShown: Bool) {
         isDecoding = false
         updateSpinner()
@@ -1676,6 +1902,9 @@ final class ViewerWindowController: NSObject, NSWindowDelegate {
         rememberDisplayedZoom()
         displayedURL = nil
         viewerView.showError(fileName: url.lastPathComponent)
+        // Слайд-шоу не встаёт на битом файле: через интервал — дальше.
+        crossfadeNext = false
+        runSlideshow(slideshow.imageShown())
     }
 
     @objc private func applicationDidActivate(_ notification: Notification) {
